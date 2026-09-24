@@ -27,7 +27,7 @@ A local-first security, networking, and smart-home platform for accessory dwelli
 
 | Phase | What ships | Status |
 |---|---|---|
-| v1 — Hardware & recording | 5 cameras recording 24/7, VLANs, Frigate, remote viewing via tunnel, UPS, health alerts. No AI — continuous recording + Frigate motion detection only. | In progress |
+| v1 — Hardware & recording | 5 cameras recording 24/7, VLANs, Frigate, remote viewing via tunnel, UPS, health alerts. No AI — continuous recording + Frigate motion detection only. | In progress — task breakdown: [`docs/v1-tasks.md`](docs/v1-tasks.md), target Sun Sept 27, 2026 |
 | v2 — Homeowner app | FastAPI backend + Next.js web app: accounts, live grid, timeline, clip export, TV-browser support. | Planned |
 | v3 — Expansion | Object detection (OpenVINO), sensor integrations (smoke/CO/gas/flood/door/stove) via the server API, off-site backup, installer image. | Planned |
 
