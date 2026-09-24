@@ -1,0 +1,39 @@
+# Example Frigate config for the ADU Smart System.
+# Copy to frigate/config.yml, fill in real credentials, do NOT commit that file.
+
+mqtt:
+  host: mosquitto
+  port: 1883
+
+# Hardware-accelerated decode on the N100/N95 iGPU (Quick Sync)
+ffmpeg:
+  hwaccel_args: preset-vaapi
+
+detectors:
+  # v1: no detector configured (recording + motion only).
+  # v3: enable OpenVINO here, same box, no added hardware.
+  cpu1:
+    type: cpu
+
+cameras:
+  cam_01_roof:
+    ffmpeg:
+      inputs:
+        - path: rtsp://USER:PASSWORD@CAM01_IP:554/Streaming/Channels/101 # main stream, record
+          roles: [record]
+        - path: rtsp://USER:PASSWORD@CAM01_IP:554/Streaming/Channels/102 # sub stream, detect/live
+          roles: [detect]
+    record:
+      enabled: true
+      retain:
+        days: 14
+    detect:
+      width: 640
+      height: 360
+      fps: 5
+
+  # cam_02_roof, cam_03_roof, cam_04_roof, cam_05_frontyard: same pattern
+
+go2rtc:
+  streams:
+    cam_01_roof: rtsp://USER:PASSWORD@CAM01_IP:554/Streaming/Channels/102

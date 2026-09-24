@@ -1,0 +1,23 @@
+# Real configs with credentials — never commit these
+frigate/config.yml
+.env
+*.env
+
+# Frigate runtime data
+frigate/media/
+frigate/exports/
+
+# Mosquitto runtime data
+mosquitto/data/
+
+# Node / Next.js (v2)
+node_modules/
+.next/
+
+# Python / FastAPI (v2)
+__pycache__/
+*.pyc
+.venv/
+
+# OS junk
+.DS_Store

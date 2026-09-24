@@ -1,0 +1,44 @@
+version: "3.9"
+
+services:
+  frigate:
+    container_name: frigate
+    image: ghcr.io/blakeblackshear/frigate:stable
+    restart: unless-stopped
+    privileged: true # required for hardware acceleration
+    shm_size: "256mb"
+    devices:
+      - /dev/dri/renderD128 # Quick Sync hardware decode (N100/N95 iGPU)
+    volumes:
+      - ./frigate/config.yml:/config/config.yml:ro
+      - /mnt/surveillance:/media/frigate # mount the 4TB HDD here, NOT the OS drive
+      - /etc/localtime:/etc/localtime:ro
+    ports:
+      - "5000:5000"  # Frigate web UI / API
+      - "8554:8554"  # RTSP restream
+      - "1984:1984"  # go2rtc
+    depends_on:
+      - mosquitto
+
+  mosquitto:
+    container_name: mosquitto
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    volumes:
+      - ./mosquitto/config:/mosquitto/config
+      - ./mosquitto/data:/mosquitto/data
+
+  caddy:
+    container_name: caddy
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "443:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on:
+      - frigate
+
+volumes:
+  caddy_data:
