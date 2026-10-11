@@ -1,0 +1,18 @@
+# Dev-only: go2rtc on its own so the live view works on a laptop before the
+# edge server / Frigate exist. Not used in production (Frigate provides go2rtc).
+#
+#   docker compose -f docker-compose.dev.yml up -d
+#
+services:
+  go2rtc:
+    container_name: go2rtc-dev
+    image: alexxit/go2rtc:1.9.14
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./go2rtc/go2rtc.yaml:/config/go2rtc.yaml:ro
+    ports:
+      - "1984:1984"      # API + browser streams (MSE/WebSocket)
+      - "8554:8554"      # RTSP restream
+      - "8555:8555/tcp"  # WebRTC
+      - "8555:8555/udp"

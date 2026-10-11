@@ -1,0 +1,38 @@
+# Standalone go2rtc for running the live view before Frigate is up
+# (docker-compose.dev.yml). In production Frigate bundles go2rtc on the same
+# port (1984), so the app talks to it unchanged.
+#
+# ${VAR} values come from the repo-root .env (gitignored) — never put real
+# credentials in this file.
+
+api:
+  listen: ":1984"
+  origin: "*" # lets the app (different port) load the player and open streams
+
+rtsp:
+  listen: ":8554"
+
+webrtc:
+  listen: ":8555"
+
+# Naming convention the app relies on:
+#   cam_XX      -> main stream (full res) — opened when a tile is expanded
+#   cam_XX_sub  -> sub stream  (low res)  — used in the grid
+#
+# Anpviz IPC-D3243W-S paths (confirmed via ONVIF): /stream0 = main 2560x1440,
+# /stream1 = sub 640x360. Both ship as H.265, which Firefox and many TV/older
+# browsers can't decode. Each stream therefore lists a second source that
+# transcodes to H.264: go2rtc picks whichever source matches the codecs the
+# browser says it supports, and only runs ffmpeg while such a browser watches.
+# (Switching the camera's sub stream to H.264 in its web UI makes the grid free.)
+#
+# #backchannel=0: the Anpviz accepts go2rtc's two-way-audio request but then
+# never sends video.
+# Credentials must not contain URL-reserved characters (@ : / # ?).
+streams:
+  cam_01:
+    - rtsp://${CAM_USER}:${CAM_PASSWORD}@${CAM01_HOST}:554/stream0#backchannel=0
+    - ffmpeg:cam_01#video=h264
+  cam_01_sub:
+    - rtsp://${CAM_USER}:${CAM_PASSWORD}@${CAM01_HOST}:554/stream1#backchannel=0
+    - ffmpeg:cam_01_sub#video=h264

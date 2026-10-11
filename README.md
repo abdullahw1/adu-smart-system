@@ -106,14 +106,30 @@ flowchart LR
 .
 ├── README.md                    # this file
 ├── docker-compose.yml           # v1 stack: Frigate, Mosquitto, Caddy
+├── docker-compose.dev.yml       # dev-only standalone go2rtc (live view before Frigate is up)
+├── go2rtc/go2rtc.yaml           # dev go2rtc streams (creds come from .env)
 ├── docs/
 │   ├── firewall-matrix.md       # full VLAN source/destination rules
 │   └── frigate-config.example.yml
 ├── frigate/
 │   └── config.yml               # actual Frigate config (gitignored: has credentials)
 ├── backend/                     # v2 — FastAPI app
-└── frontend/                    # v2 — Next.js app
+└── frontend/                    # v2 — Next.js app (live camera grid)
 ```
+
+## Live view (dev)
+
+Runs the camera grid on a laptop on the same network as the cameras, before the edge server exists.
+
+```sh
+cp .env.example .env            # fill in CAM_USER / CAM_PASSWORD
+docker compose -f docker-compose.dev.yml up -d
+cd frontend && npm install && npm run dev
+```
+
+Open http://localhost:3000 (or `http://<laptop-ip>:3000` from a phone). Click a tile for the full-quality stream; Esc closes it. To add a camera, add `cam_XX` (main, `/stream0`) and `cam_XX_sub` (sub, `/stream1`) to `go2rtc/go2rtc.yaml` with `#backchannel=0` — the grid picks it up automatically.
+
+In production the app points at Frigate's bundled go2rtc instead (same port 1984); set `NEXT_PUBLIC_GO2RTC_URL` in `frontend/.env.local` if it isn't on the same host as the app.
 
 ## Getting started
 

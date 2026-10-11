@@ -19,9 +19,9 @@ cameras:
   cam_01_roof:
     ffmpeg:
       inputs:
-        - path: rtsp://USER:PASSWORD@CAM01_IP:554/Streaming/Channels/101 # main stream, record
+        - path: rtsp://USER:PASSWORD@CAM01_IP:554/stream0 # main 2560x1440 H.265, record
           roles: [record]
-        - path: rtsp://USER:PASSWORD@CAM01_IP:554/Streaming/Channels/102 # sub stream, detect/live
+        - path: rtsp://USER:PASSWORD@CAM01_IP:554/stream1 # sub 640x360, detect/live
           roles: [detect]
     record:
       enabled: true
@@ -34,6 +34,16 @@ cameras:
 
   # cam_02_roof, cam_03_roof, cam_04_roof, cam_05_frontyard: same pattern
 
+# Stream names follow the app's convention (see go2rtc/go2rtc.yaml):
+# <camera> = main, <camera>_sub = sub. #backchannel=0 is required — the Anpviz
+# accepts the ONVIF two-way-audio request but then never sends video.
+# The ffmpeg: line is an on-demand H.265 -> H.264 transcode for browsers that
+# can't decode H.265 (Firefox, many TVs); see go2rtc/go2rtc.yaml.
 go2rtc:
   streams:
-    cam_01_roof: rtsp://USER:PASSWORD@CAM01_IP:554/Streaming/Channels/102
+    cam_01_roof:
+      - rtsp://USER:PASSWORD@CAM01_IP:554/stream0#backchannel=0
+      - ffmpeg:cam_01_roof#video=h264#hardware
+    cam_01_roof_sub:
+      - rtsp://USER:PASSWORD@CAM01_IP:554/stream1#backchannel=0
+      - ffmpeg:cam_01_roof_sub#video=h264#hardware
