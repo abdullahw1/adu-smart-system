@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { LivePlayer, type PlayerStatus } from "@/components/LivePlayer";
 import { fetchCameraNames, saveCameraName, type CameraNames } from "@/lib/cameraNames";
@@ -170,6 +171,9 @@ function Expanded({
           <span className="muted">{src === camera.mainSrc ? "Full quality" : "Low quality"}</span>
           <StatusBadge status={status} inline />
           <RecordButton recording={recording} onToggle={onToggleRecording} />
+          <Link className="settings-link" href={`/cameras/${camera.id}`}>
+            Settings
+          </Link>
           <button className="close" onClick={onClose} aria-label="Close">
             ✕
           </button>

@@ -131,6 +131,8 @@ Open http://localhost:3000 (or `http://<laptop-ip>:3000` from a phone). Click a 
 
 **On-demand recording (until the HDD and Frigate are in):** open a camera and press **Record**; press **Stop** to finish (recordings auto-stop after 1 hour). Clips are full-quality MP4s saved on the machine running the app, in `frontend/data/recordings/` (override with `RECORDINGS_DIR`), and are listed under **Recordings** to play, download, or delete. Needs `ffmpeg`/`ffprobe` on that machine (`brew install ffmpeg`). Recording stops if the app is shut down, though the file up to that point stays playable.
 
+**Camera settings:** in a camera's expanded view, **Settings** opens its date/time (per-camera or all at once), day/night, brightness/contrast/color/sharpness, WDR, backlight, and vertical flip, all over ONVIF using the `CAMxx_HOST`/`CAM_USER`/`CAM_PASSWORD` values from the repo-root `.env`. These Anpviz cameras only store a fixed UTC offset (they ignore DST rules), so after a daylight-saving change the page flags the clock as wrong. Press Apply to fix it.
+
 In production the app points at Frigate's bundled go2rtc instead (same port 1984); set `NEXT_PUBLIC_GO2RTC_URL` in `frontend/.env.local` if it isn't on the same host as the app.
 
 ## Getting started
