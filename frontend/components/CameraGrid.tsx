@@ -4,6 +4,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { LivePlayer, type PlayerStatus } from "@/components/LivePlayer";
 import { fetchCameraNames, saveCameraName, type CameraNames } from "@/lib/cameraNames";
 import { fetchCameras, go2rtcBase, type Camera } from "@/lib/go2rtc";
+import {
+  fetchRecordings,
+  formatDuration,
+  setRecording,
+  type ActiveRecording,
+} from "@/lib/recordings";
 
 type Load =
   | { state: "loading" }
@@ -15,6 +21,7 @@ export function CameraGrid() {
   const [load, setLoad] = useState<Load>({ state: "loading" });
   const [names, setNames] = useState<CameraNames>({});
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [recording, setRecordingState] = useState<Record<string, ActiveRecording>>({});
 
   const refresh = useCallback(async (b: string) => {
     setLoad({ state: "loading" });
@@ -32,6 +39,17 @@ export function CameraGrid() {
     refresh(b);
   }, [refresh]);
 
+  // Poll so a recording started on another device (or auto-stopped) shows here.
+  useEffect(() => {
+    const sync = () =>
+      fetchRecordings()
+        .then((r) => setRecordingState(r.active))
+        .catch(() => {});
+    sync();
+    const timer = setInterval(sync, 5_000);
+    return () => clearInterval(timer);
+  }, []);
+
   useEffect(() => {
     if (!expandedId) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && setExpandedId(null);
@@ -40,6 +58,8 @@ export function CameraGrid() {
   }, [expandedId]);
 
   const rename = async (id: string, name: string) => setNames(await saveCameraName(id, name));
+  const toggleRecording = async (id: string) =>
+    setRecordingState(await setRecording(id, recording[id] ? "stop" : "start"));
 
   if (!base || load.state === "loading") {
     return <p className="notice">Loading cameras…</p>;
@@ -65,13 +85,21 @@ export function CameraGrid() {
     <>
       <div className="grid">
         {cameras.map((cam) => (
-          <Tile key={cam.id} base={base} camera={cam} onOpen={() => setExpandedId(cam.id)} />
+          <Tile
+            key={cam.id}
+            base={base}
+            camera={cam}
+            recording={Boolean(recording[cam.id])}
+            onOpen={() => setExpandedId(cam.id)}
+          />
         ))}
       </div>
       {expanded && (
         <Expanded
           base={base}
           camera={expanded}
+          recording={recording[expanded.id]}
+          onToggleRecording={() => toggleRecording(expanded.id)}
           onRename={(name) => rename(expanded.id, name)}
           onClose={() => setExpandedId(null)}
         />
@@ -80,7 +108,17 @@ export function CameraGrid() {
   );
 }
 
-function Tile({ base, camera, onOpen }: { base: string; camera: Camera; onOpen: () => void }) {
+function Tile({
+  base,
+  camera,
+  recording,
+  onOpen,
+}: {
+  base: string;
+  camera: Camera;
+  recording: boolean;
+  onOpen: () => void;
+}) {
   const [status, setStatus] = useState<PlayerStatus>("connecting");
   return (
     <div
@@ -93,6 +131,7 @@ function Tile({ base, camera, onOpen }: { base: string; camera: Camera; onOpen: 
     >
       <LivePlayer base={base} src={camera.gridSrc} onStatus={setStatus} />
       <span className="tile-label">{camera.label}</span>
+      {recording && <span className="rec-badge">REC</span>}
       <StatusBadge status={status} />
     </div>
   );
@@ -101,11 +140,15 @@ function Tile({ base, camera, onOpen }: { base: string; camera: Camera; onOpen: 
 function Expanded({
   base,
   camera,
+  recording,
+  onToggleRecording,
   onRename,
   onClose,
 }: {
   base: string;
   camera: Camera;
+  recording?: ActiveRecording;
+  onToggleRecording: () => Promise<void>;
   onRename: (name: string) => Promise<void>;
   onClose: () => void;
 }) {
@@ -126,6 +169,7 @@ function Expanded({
           <CameraTitle label={camera.label} onRename={onRename} />
           <span className="muted">{src === camera.mainSrc ? "Full quality" : "Low quality"}</span>
           <StatusBadge status={status} inline />
+          <RecordButton recording={recording} onToggle={onToggleRecording} />
           <button className="close" onClick={onClose} aria-label="Close">
             ✕
           </button>
@@ -208,6 +252,55 @@ function CameraTitle({ label, onRename }: { label: string; onRename: (name: stri
       </button>
       {error && <span className="error">{error}</span>}
     </form>
+  );
+}
+
+// Records the full-quality main stream to the server's disk until stopped.
+function RecordButton({
+  recording,
+  onToggle,
+}: {
+  recording?: ActiveRecording;
+  onToggle: () => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!recording) return;
+    const timer = setInterval(() => setNow(Date.now()), 1_000);
+    return () => clearInterval(timer);
+  }, [recording]);
+
+  const toggle = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await onToggle();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <button
+        className={`record${recording ? " recording" : ""}`}
+        onClick={toggle}
+        disabled={busy}
+        aria-pressed={Boolean(recording)}
+      >
+        {busy
+          ? recording ? "Stopping…" : "Starting…"
+          : recording
+            ? `Stop ${formatDuration(now - recording.startedAt)}`
+            : "Record"}
+      </button>
+      {error && <span className="record-error">{error}</span>}
+    </>
   );
 }
 

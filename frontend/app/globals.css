@@ -25,12 +25,6 @@ main {
   padding: 16px;
 }
 
-.page-header h1 {
-  font-size: 1.25rem;
-  font-weight: 600;
-  margin: 0 0 16px;
-}
-
 .notice {
   color: var(--muted);
   padding: 48px 0;
@@ -157,3 +151,72 @@ button {
 }
 .rename-form button { padding: 4px 12px; font-size: 0.85rem; }
 .rename-form .error { color: var(--bad); font-size: 0.85rem; }
+
+.rec-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bad);
+  pointer-events: none;
+}
+.expanded .record { padding: 4px 12px; font-size: 0.85rem; }
+.expanded .record::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--bad);
+}
+.expanded .record.recording { border-color: var(--bad); font-variant-numeric: tabular-nums; }
+.expanded .record.recording::before { border-radius: 1px; }
+.expanded .record-error { color: var(--bad); font-size: 0.85rem; }
+
+.nav { display: flex; gap: 16px; margin-bottom: 16px; }
+.nav a { color: var(--muted); text-decoration: none; font-weight: 600; }
+.nav a[aria-current="page"] { color: var(--text); }
+
+a.button {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 14px;
+  text-decoration: none;
+}
+button:disabled { opacity: 0.5; cursor: default; }
+
+.recordings { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.recordings li {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+}
+.recording-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.recording-row .muted { color: var(--muted); font-size: 0.85rem; }
+.recording-camera { font-weight: 600; }
+.rec-inline {
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bad);
+}
+.recording-actions { margin-left: auto; display: flex; gap: 8px; }
+.recording-actions button, .recording-actions .button { padding: 4px 12px; font-size: 0.85rem; }
+.recording-video {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  max-height: 70vh;
+  background: #000;
+  border-radius: var(--radius);
+}

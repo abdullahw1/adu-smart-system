@@ -129,6 +129,8 @@ cd frontend && npm install && npm run dev
 
 Open http://localhost:3000 (or `http://<laptop-ip>:3000` from a phone). Click a tile for the full-quality stream; Esc closes it. To add a camera, add `cam_XX` (main, `/stream0`) and `cam_XX_sub` (sub, `/stream1`) to `go2rtc/go2rtc.yaml` with `#backchannel=0` — the grid picks it up automatically.
 
+**On-demand recording (until the HDD and Frigate are in):** open a camera and press **Record**; press **Stop** to finish (recordings auto-stop after 1 hour). Clips are full-quality MP4s saved on the machine running the app, in `frontend/data/recordings/` (override with `RECORDINGS_DIR`), and are listed under **Recordings** to play, download, or delete. Needs `ffmpeg`/`ffprobe` on that machine (`brew install ffmpeg`). Recording stops if the app is shut down, though the file up to that point stays playable.
+
 In production the app points at Frigate's bundled go2rtc instead (same port 1984); set `NEXT_PUBLIC_GO2RTC_URL` in `frontend/.env.local` if it isn't on the same host as the app.
 
 ## Getting started

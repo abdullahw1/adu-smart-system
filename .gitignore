@@ -23,5 +23,5 @@ __pycache__/
 # OS junk
 .DS_Store
 
-# Camera display names (runtime data, per install)
+# App runtime data, per install: camera display names, on-demand recordings
 frontend/data/
