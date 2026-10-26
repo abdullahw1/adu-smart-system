@@ -36,3 +36,21 @@ streams:
   cam_01_sub:
     - rtsp://${CAM_USER}:${CAM_PASSWORD}@${CAM01_HOST}:554/stream1#backchannel=0
     - ffmpeg:cam_01_sub#video=h264
+  cam_02:
+    - rtsp://${CAM_USER}:${CAM_PASSWORD}@${CAM02_HOST}:554/stream0#backchannel=0
+    - ffmpeg:cam_02#video=h264
+  cam_02_sub:
+    - rtsp://${CAM_USER}:${CAM_PASSWORD}@${CAM02_HOST}:554/stream1#backchannel=0
+    - ffmpeg:cam_02_sub#video=h264
+  cam_03:
+    - rtsp://${CAM_USER}:${CAM_PASSWORD}@${CAM03_HOST}:554/stream0#backchannel=0
+    - ffmpeg:cam_03#video=h264
+  cam_03_sub:
+    - rtsp://${CAM_USER}:${CAM_PASSWORD}@${CAM03_HOST}:554/stream1#backchannel=0
+    - ffmpeg:cam_03_sub#video=h264
+  cam_04:
+    - rtsp://${CAM_USER}:${CAM_PASSWORD}@${CAM04_HOST}:554/stream0#backchannel=0
+    - ffmpeg:cam_04#video=h264
+  cam_04_sub:
+    - rtsp://${CAM_USER}:${CAM_PASSWORD}@${CAM04_HOST}:554/stream1#backchannel=0
+    - ffmpeg:cam_04_sub#video=h264
