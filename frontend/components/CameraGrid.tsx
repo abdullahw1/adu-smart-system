@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useSession } from "@/lib/session";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { LivePlayer, type PlayerStatus } from "@/components/LivePlayer";
 import { fetchCameraNames, saveCameraName, type CameraNames } from "@/lib/cameraNames";
@@ -18,6 +19,7 @@ type Load =
   | { state: "ready"; cameras: Camera[] };
 
 export function CameraGrid() {
+  const user = useSession();
   const [base, setBase] = useState<string | null>(null);
   const [load, setLoad] = useState<Load>({ state: "loading" });
   const [names, setNames] = useState<CameraNames>({});
@@ -79,7 +81,7 @@ export function CameraGrid() {
     return <p className="notice">No cameras configured in go2rtc yet.</p>;
   }
 
-  const cameras = load.cameras.map((cam) => ({ ...cam, label: names[cam.id] ?? cam.label }));
+  const cameras = load.cameras.map((cam) => ({ ...cam, label: names[cam.id] || cam.label }));
   const expanded = cameras.find((cam) => cam.id === expandedId);
 
   return (
@@ -97,6 +99,8 @@ export function CameraGrid() {
       </div>
       {expanded && (
         <Expanded
+          key={expanded.id}
+          admin={user?.role === 'admin'}
           base={base}
           camera={expanded}
           recording={recording[expanded.id]}
@@ -128,7 +132,7 @@ function Tile({
       tabIndex={0}
       aria-label={`Open ${camera.label}`}
       onClick={onOpen}
-      onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && onOpen()}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(); } }}
     >
       <LivePlayer base={base} src={camera.gridSrc} onStatus={setStatus} />
       <span className="tile-label">{camera.label}</span>
@@ -145,7 +149,9 @@ function Expanded({
   onToggleRecording,
   onRename,
   onClose,
+  admin,
 }: {
+  admin: boolean;
   base: string;
   camera: Camera;
   recording?: ActiveRecording;
@@ -153,6 +159,21 @@ function Expanded({
   onRename: (name: string) => Promise<void>;
   onClose: () => void;
 }) {
+  const dialog = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    const root = dialog.current;
+    root?.querySelector<HTMLButtonElement>('[aria-label="Close"]')?.focus();
+    const trap = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab' || !root) return;
+      const elements = Array.from(root.querySelectorAll<HTMLElement>('button:not(:disabled), a, input, select'));
+      const first = elements[0], last = elements[elements.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    };
+    root?.addEventListener('keydown', trap);
+    return () => { root?.removeEventListener('keydown', trap); previous?.focus(); };
+  }, []);
   // Main stream is H.265; browsers without HEVC support (e.g. Firefox) never
   // get a frame. Drop to the sub stream rather than show a black box.
   const [src, setSrc] = useState(camera.mainSrc);
@@ -160,20 +181,22 @@ function Expanded({
 
   const handleStatus = (s: PlayerStatus) => {
     setStatus(s);
-    if (s === "no-signal" && src !== camera.gridSrc) setSrc(camera.gridSrc);
+    if ((s === "no-signal" || s === "unsupported") && src !== camera.gridSrc) setSrc(camera.gridSrc);
   };
 
   return (
-    <div className="overlay" onClick={onClose} role="dialog" aria-label={camera.label}>
+    <div ref={dialog} className="overlay" onClick={onClose} role="dialog" aria-modal="true" aria-label={camera.label}>
       <div className="expanded" onClick={(e) => e.stopPropagation()}>
         <header>
-          <CameraTitle label={camera.label} onRename={onRename} />
+          {admin ? <CameraTitle label={camera.label} onRename={onRename} /> : <h2>{camera.label}</h2>}
           <span className="muted">{src === camera.mainSrc ? "Full quality" : "Low quality"}</span>
           <StatusBadge status={status} inline />
-          <RecordButton recording={recording} onToggle={onToggleRecording} />
-          <Link className="settings-link" href={`/cameras/${camera.id}`}>
-            Settings
-          </Link>
+          {admin && <RecordButton recording={recording} onToggle={onToggleRecording} />}
+          {admin && <Link className="settings-link" href={`/cameras/${camera.id}`}>Settings</Link>}
+          <select aria-label="Video quality" value={src} onChange={e => setSrc(e.target.value)}>
+            <option value={camera.mainSrc}>Full quality</option>
+            {camera.gridSrc !== camera.mainSrc && <option value={camera.gridSrc}>Lower bandwidth</option>}
+          </select>
           <button className="close" onClick={onClose} aria-label="Close">
             ✕
           </button>
@@ -309,6 +332,6 @@ function RecordButton({
 }
 
 function StatusBadge({ status, inline = false }: { status: PlayerStatus; inline?: boolean }) {
-  const text = { connecting: "Connecting", live: "Live", "no-signal": "No signal" }[status];
+  const text = { connecting: "Connecting", live: "Live", "no-signal": "No signal", reconnecting: "Reconnecting", unsupported: "Unsupported video" }[status];
   return <span className={`badge badge-${status}${inline ? " badge-inline" : ""}`}>{text}</span>;
 }

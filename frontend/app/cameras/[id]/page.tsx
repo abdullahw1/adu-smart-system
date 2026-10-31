@@ -8,7 +8,7 @@ export default async function CameraSettingsPage({ params }: { params: Promise<{
       <header className="page-header">
         <Nav current="" />
       </header>
-      <CameraSettingsPanel id={id} />
+      <CameraSettingsPanel key={id} id={id} />
     </main>
   );
 }

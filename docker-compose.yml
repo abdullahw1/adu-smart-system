@@ -1,44 +1,62 @@
-version: "3.9"
-
+# Ubuntu production stack. Start via deploy/adu.service so the HDD is checked
+# before Docker can bind a directory on the OS disk by mistake.
 services:
   frigate:
-    container_name: frigate
-    image: ghcr.io/blakeblackshear/frigate:stable
-    restart: unless-stopped
-    privileged: true # required for hardware acceleration
+    image: ghcr.io/blakeblackshear/frigate:0.18.2
+    restart: "no" # systemd owns restarts after checking the HDD mount
+    stop_grace_period: 30s
     shm_size: "256mb"
     devices:
-      - /dev/dri/renderD128 # Quick Sync hardware decode (N100/N95 iGPU)
+      - /dev/dri/renderD128:/dev/dri/renderD128
     volumes:
-      - ./frigate/config.yml:/config/config.yml:ro
-      - /mnt/surveillance:/media/frigate # mount the 4TB HDD here, NOT the OS drive
+      - type: bind
+        source: ./frigate
+        target: /config
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /mnt/surveillance
+        target: /media/frigate
+        bind:
+          create_host_path: false
       - /etc/localtime:/etc/localtime:ro
+    tmpfs:
+      - /tmp/cache:size=1000000000
     ports:
-      - "5000:5000"  # Frigate web UI / API
-      - "8554:8554"  # RTSP restream
-      - "1984:1984"  # go2rtc
-    depends_on:
-      - mosquitto
-
-  mosquitto:
-    container_name: mosquitto
-    image: eclipse-mosquitto:2
-    restart: unless-stopped
+      - "127.0.0.1:5000:5000"
+      - "127.0.0.1:1984:1984"
+      - "127.0.0.1:8554:8554"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/api/stats',timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+  app:
+    build: ./frontend
+    restart: "no" # systemd owns restarts after checking the HDD mount
+    network_mode: host
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      HOST: 127.0.0.1
+      APP_ORIGIN: ${APP_ORIGIN:-http://localhost:3000}
+      APP_DATA_DIR: /app/data
+      RECORDINGS_DIR: /recordings
+      REQUIRE_RECORDING_MOUNT: "1"
+      GO2RTC_API_URL: http://127.0.0.1:1984
+      GO2RTC_RTSP_URL: rtsp://127.0.0.1:8554
+      FRIGATE_API_URL: http://127.0.0.1:5000
     volumes:
-      - ./mosquitto/config:/mosquitto/config
-      - ./mosquitto/data:/mosquitto/data
-
-  caddy:
-    container_name: caddy
-    image: caddy:2-alpine
-    restart: unless-stopped
-    ports:
-      - "443:443"
-    volumes:
-      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
+      - type: bind
+        source: ./runtime/app
+        target: /app/data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /mnt/surveillance/manual
+        target: /recordings
+        bind:
+          create_host_path: false
     depends_on:
-      - frigate
-
-volumes:
-  caddy_data:
+      frigate:
+        condition: service_healthy

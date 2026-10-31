@@ -1,142 +1,135 @@
-// Server-only. On-demand recording until the edge server's HDD arrives and
-// Frigate takes over 24/7 recording. ffmpeg pulls the camera from go2rtc's RTSP
-// restream (never from the camera directly) and copies the video as-is into an
-// MP4 on this machine's disk.
-import { spawn, execFile, type ChildProcess } from "node:child_process";
-import { mkdir, readdir, stat } from "node:fs/promises";
-import path from "node:path";
-
-export const RECORDINGS_DIR =
-  process.env.RECORDINGS_DIR ?? path.join(process.cwd(), "data", "recordings");
-const GO2RTC_RTSP = (process.env.GO2RTC_RTSP_URL ?? "rtsp://127.0.0.1:8554").replace(/\/+$/, "");
-const FFMPEG = process.env.FFMPEG_PATH ?? "ffmpeg";
-const FFPROBE = process.env.FFPROBE_PATH ?? "ffprobe";
-
-// Someone will forget to press Stop. Cap each recording so it can't fill the disk.
-const MAX_DURATION_MS = 60 * 60_000;
-
+import { spawn, execFile, type ChildProcess } from 'node:child_process';
+import { mkdir, readdir, lstat, statfs } from 'node:fs/promises';
+import { promisify } from 'node:util';
+import { randomUUID } from 'node:crypto';
+import path from 'node:path';
+import { cameras } from '@/server/cameras.mjs';
+import { withCameraLock } from '@/lib/serial';
+const exec = promisify(execFile);
+export const RECORDINGS_DIR = process.env.RECORDINGS_DIR || path.join(process.cwd(), 'data', 'recordings');
 export const CAMERA_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
-export const FILE_RE = /^[A-Za-z0-9_-]{1,128}\.mp4$/;
-
+export const FILE_RE = /^[A-Za-z0-9_-]{1,160}\.mp4$/;
 export type ActiveRecording = { file: string; startedAt: number };
 export type RecordingFile = { file: string; camera: string; size: number; createdAt: number };
+type Session = ActiveRecording & { proc: ChildProcess; ready: boolean; stopping?: boolean; exited: Promise<void>; timer?: ReturnType<typeof setInterval> };
+type Options = { directory: string; ffmpeg: string; ffprobe: string; rtsp: string; minFreeBytes: number; maxTotalBytes: number; requireMount: boolean; maxDurationSeconds: number; allowed: (id: string) => Promise<boolean> };
 
-type Session = ActiveRecording & { proc: ChildProcess; timer: ReturnType<typeof setTimeout> };
-
-// Kept on globalThis so dev-mode hot reloads don't orphan running ffmpegs.
-const g = globalThis as typeof globalThis & { __recordings?: Map<string, Session> };
-const sessions = (g.__recordings ??= new Map());
-
-export function activeRecordings(): Record<string, ActiveRecording> {
-  return Object.fromEntries(
-    [...sessions].map(([id, { file, startedAt }]) => [id, { file, startedAt }]),
-  );
-}
-
-export async function startRecording(id: string): Promise<ActiveRecording> {
-  const existing = sessions.get(id);
-  if (existing) return { file: existing.file, startedAt: existing.startedAt };
-
-  const src = `${GO2RTC_RTSP}/${id}`;
-  const codec = await probeVideoCodec(src);
-  await mkdir(RECORDINGS_DIR, { recursive: true });
-
-  const startedAt = Date.now();
-  const file = `${id}_${timestamp(new Date(startedAt))}.mp4`;
-  const args = [
-    "-hide_banner", "-loglevel", "error",
-    "-rtsp_transport", "tcp",
-    "-i", src,
-    "-map", "0:v:0", "-map", "0:a:0?",
-    "-c:v", "copy",
-    // hvc1 (not hev1) so Safari/QuickTime will play H.265 files.
-    ...(codec === "hevc" ? ["-tag:v", "hvc1"] : []),
-    // Camera audio is G.711, which MP4 can't hold.
-    "-c:a", "aac", "-b:a", "64k",
-    // Fragmented MP4: the file stays playable even if the server dies mid-recording.
-    "-movflags", "+frag_keyframe+empty_moov+default_base_moof",
-    "-f", "mp4",
-    path.join(RECORDINGS_DIR, file),
-  ];
-
-  const proc = spawn(FFMPEG, args, { stdio: ["pipe", "ignore", "pipe"] });
-  proc.stderr?.on("data", (d) => console.error(`[record ${id}] ${String(d).trim()}`));
-
-  await new Promise<void>((resolve, reject) => {
-    proc.once("spawn", resolve);
-    proc.once("error", (err: NodeJS.ErrnoException) =>
-      reject(new Error(err.code === "ENOENT" ? "ffmpeg is not installed on the server" : err.message)),
-    );
-  });
-
-  const timer = setTimeout(() => stopRecording(id), MAX_DURATION_MS);
-  sessions.set(id, { file, startedAt, proc, timer });
-  proc.once("exit", () => {
-    clearTimeout(timer);
-    if (sessions.get(id)?.proc === proc) sessions.delete(id);
-  });
-
-  return { file, startedAt };
-}
-
-export async function stopRecording(id: string): Promise<void> {
-  const session = sessions.get(id);
-  if (!session) return;
-  sessions.delete(id);
-  clearTimeout(session.timer);
-
-  const { proc } = session;
-  const exited = new Promise<void>((resolve) => proc.once("exit", () => resolve()));
-  proc.stdin?.end("q"); // ask ffmpeg to finish the current fragment and exit
-  const forceKill = setTimeout(() => proc.kill("SIGTERM"), 5_000);
-  await exited;
-  clearTimeout(forceKill);
-}
-
-export async function listRecordings(): Promise<RecordingFile[]> {
-  let names: string[];
-  try {
-    names = await readdir(RECORDINGS_DIR);
-  } catch {
-    return [];
+export class Recorder {
+  private sessions = new Map<string, Session>();
+  readonly errors: Record<string, string> = {};
+  readonly options: Options;
+  constructor(options: Partial<Options> = {}) {
+    this.options = {
+      directory: RECORDINGS_DIR, ffmpeg: process.env.FFMPEG_PATH || 'ffmpeg', ffprobe: process.env.FFPROBE_PATH || 'ffprobe',
+      rtsp: (process.env.GO2RTC_RTSP_URL || 'rtsp://127.0.0.1:8554').replace(/\/+$/, ''),
+      minFreeBytes: Number(process.env.RECORDING_MIN_FREE_BYTES || 1024 ** 3),
+      maxTotalBytes: Number(process.env.RECORDING_MAX_BYTES || 100 * 1024 ** 3),
+      requireMount: process.env.REQUIRE_RECORDING_MOUNT === '1', maxDurationSeconds: 3600,
+      allowed: async id => (await cameras()).some(camera => camera.id === id), ...options,
+    };
+    for (const value of [this.options.minFreeBytes, this.options.maxTotalBytes, this.options.maxDurationSeconds]) if (!Number.isFinite(value) || value <= 0) throw new Error('Recording limits must be positive numbers');
   }
-  const files = await Promise.all(
-    names
-      .filter((name) => FILE_RE.test(name))
-      .map(async (file) => {
-        const s = await stat(path.join(RECORDINGS_DIR, file));
-        return {
-          file,
-          camera: file.replace(/_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.mp4$/, ""),
-          size: s.size,
-          createdAt: s.birthtimeMs || s.mtimeMs,
-        };
-      }),
-  );
-  return files.sort((a, b) => b.createdAt - a.createdAt);
+  active(): Record<string, ActiveRecording> {
+    return Object.fromEntries([...this.sessions].filter(([, s]) => s.ready).map(([id, { file, startedAt }]) => [id, { file, startedAt }]));
+  }
+  busy(file: string) { return [...this.sessions.values()].some(session => session.file === file); }
+  async files(): Promise<RecordingFile[]> {
+    let names: string[];
+    try { names = await readdir(this.options.directory); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error; }
+    const files = await Promise.all(names.filter(file => FILE_RE.test(file)).map(async file => {
+      try {
+        const s = await lstat(path.join(this.options.directory, file));
+        if (!s.isFile()) return null;
+        return { file, camera: file.replace(/_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}(?:_[a-f0-9-]+)?\.mp4$/, ''), size: s.size, createdAt: s.birthtimeMs || s.mtimeMs };
+      } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
+    }));
+    return files.filter((file): file is RecordingFile => Boolean(file)).sort((a, b) => b.createdAt - a.createdAt);
+  }
+  async storage() {
+    if (this.options.requireMount) await exec('mountpoint', ['-q', this.options.directory], { timeout: 3000 }).catch(() => { throw new Error('Recording drive is not mounted'); });
+    await mkdir(this.options.directory, { recursive: true });
+    const [s, files] = await Promise.all([statfs(this.options.directory), this.files()]);
+    return { availableBytes: s.bavail * s.bsize, totalBytes: s.blocks * s.bsize, recordingBytes: files.reduce((sum, file) => sum + file.size, 0), limitBytes: this.options.maxTotalBytes };
+  }
+  private async checkStorage() {
+    const s = await this.storage();
+    if (s.availableBytes < this.options.minFreeBytes) throw new Error('Recording stopped: disk space is low');
+    if (s.recordingBytes >= this.options.maxTotalBytes) throw new Error('Recording stopped: clip storage limit reached');
+  }
+  start(id: string) {
+    return withCameraLock('record:' + id, async () => {
+      if (!CAMERA_ID_RE.test(id) || !await this.options.allowed(id)) throw new Error('Unknown camera');
+      const existing = this.sessions.get(id);
+      if (existing) return { file: existing.file, startedAt: existing.startedAt };
+      await this.checkStorage();
+      const src = this.options.rtsp + '/' + id;
+      const { stdout } = await exec(this.options.ffprobe, ['-v', 'error', '-rtsp_transport', 'tcp', '-select_streams', 'v:0', '-show_entries', 'stream=codec_name', '-of', 'csv=p=0', src], { timeout: 10000 }).catch(() => { throw new Error('Camera stream unavailable or ffprobe is not installed'); });
+      const startedAt = Date.now();
+      const stamp = new Date(startedAt).toISOString().slice(0, 19).replace('T', '_').replaceAll(':', '-');
+      const file = `${id}_${stamp}_${randomUUID()}.mp4`;
+      const args = ['-hide_banner', '-loglevel', 'error', '-nostats', '-progress', 'pipe:1', '-rtsp_transport', 'tcp', '-i', src, '-map', '0:v:0', '-map', '0:a:0?', '-c:v', 'copy', ...(stdout.trim() === 'hevc' ? ['-tag:v', 'hvc1'] : []), '-c:a', 'aac', '-b:a', '64k', '-t', String(this.options.maxDurationSeconds), '-movflags', '+frag_keyframe+empty_moov+default_base_moof', '-f', 'mp4', path.join(this.options.directory, file)];
+      const proc = spawn(this.options.ffmpeg, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+      let resolveExit!: () => void;
+      const exited = new Promise<void>(resolve => { resolveExit = resolve; });
+      const session: Session = { file, startedAt, proc, ready: false, exited };
+      this.sessions.set(id, session);
+      const finish = () => {
+        const naturalEnd = proc.exitCode === 0 && Date.now() - startedAt >= (this.options.maxDurationSeconds - 1) * 1000;
+        if (session.ready && !session.stopping && !naturalEnd) this.errors[id] = 'Recorder stopped unexpectedly; check the camera and storage';
+        clearInterval(session.timer); resolveExit();
+        if (this.sessions.get(id) === session) this.sessions.delete(id);
+      };
+      proc.once('exit', finish); proc.once('error', finish);
+      proc.stdin?.on('error', () => {});
+      // Do not return camera URLs or FFmpeg diagnostics to clients.
+      proc.stderr?.resume();
+      try {
+        await new Promise<void>((resolve, reject) => {
+          let text = '';
+          const timeout = setTimeout(() => reject(new Error('No recording frames received')), 12000);
+          const fail = () => { cleanup(); reject(new Error('Recorder exited before receiving video')); };
+          const progress = (chunk: Buffer) => {
+            text = (text + chunk.toString()).slice(-8192);
+            if (/frame=\s*[1-9]\d*/.test(text)) { cleanup(); resolve(); }
+          };
+          const cleanup = () => { clearTimeout(timeout); proc.stdout?.off('data', progress); proc.off('exit', fail); proc.off('error', fail); };
+          proc.stdout?.on('data', progress); proc.once('exit', fail); proc.once('error', fail);
+        });
+        if (proc.exitCode !== null || proc.signalCode !== null) throw new Error('Recorder stopped during startup');
+        proc.stdout?.resume(); session.ready = true; delete this.errors[id];
+        let checking = false;
+        session.timer = setInterval(async () => {
+          if (checking) return; checking = true;
+          try { await this.checkStorage(); }
+          catch (error) { this.errors[id] = (error as Error).message; void this.stop(id).catch(() => {}); }
+          finally { checking = false; }
+        }, 5000);
+        return { file, startedAt };
+      } catch (error) {
+        this.errors[id] = (error as Error).message;
+        await this.terminate(session);
+        throw error;
+      }
+    });
+  }
+  private async terminate(session: Session) {
+    session.stopping = true;
+    if (session.proc.exitCode !== null || session.proc.signalCode !== null) return;
+    session.proc.stdin?.end('q');
+    const term = setTimeout(() => session.proc.kill('SIGTERM'), 3000);
+    const kill = setTimeout(() => session.proc.kill('SIGKILL'), 5000);
+    try { await session.exited; } finally { clearTimeout(term); clearTimeout(kill); }
+  }
+  async shutdown() { await Promise.all([...this.sessions.keys()].map(id => this.stop(id))); }
+  stop(id: string) { return withCameraLock('record:' + id, async () => { const session = this.sessions.get(id); if (session) await this.terminate(session); }); }
 }
-
-// Also confirms the stream is reachable before we start writing a file.
-function probeVideoCodec(src: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(
-      FFPROBE,
-      ["-v", "error", "-rtsp_transport", "tcp", "-select_streams", "v:0",
-       "-show_entries", "stream=codec_name", "-of", "csv=p=0", src],
-      { timeout: 10_000 },
-      (err, stdout) => {
-        if (err) {
-          const missing = (err as NodeJS.ErrnoException).code === "ENOENT";
-          return reject(new Error(missing ? "ffprobe is not installed on the server" : "Camera stream unavailable"));
-        }
-        resolve(stdout.trim());
-      },
-    );
-  });
-}
-
-// Local time, filename-safe: 2026-10-25_17-51-03
-function timestamp(d: Date): string {
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}`;
-}
+const state = globalThis as typeof globalThis & { __aduRecorder?: Recorder };
+const recorder = state.__aduRecorder ??= new Recorder();
+export const activeRecordings = () => recorder.active();
+export const startRecording = (id: string) => recorder.start(id);
+export const stopRecording = (id: string) => recorder.stop(id);
+export const listRecordings = () => recorder.files();
+export const recordingBusy = (file: string) => recorder.busy(file);
+export const recordingErrors = () => recorder.errors;
+export const storageStatus = () => recorder.storage();

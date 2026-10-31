@@ -1,0 +1,8 @@
+export type User = { name: string; role: 'admin' | 'viewer' };
+export function authorize(request: Request, role?: 'admin' | 'viewer'): Promise<Response | null>;
+export function session(headers: Headers): User | null;
+export function configured(): boolean;
+export function createUser(name: string, password: string, role: 'admin' | 'viewer', first?: boolean): Promise<void>;
+export function login(name: string, password: string): Promise<string | null>;
+export function session(headers: Headers | Record<string,string>): User | null;
+export function logout(headers: Headers | Record<string,string>): void;

@@ -25,3 +25,8 @@ __pycache__/
 
 # App runtime data, per install: camera display names, on-demand recordings
 frontend/data/
+
+# Production runtime and isolated build output
+runtime/
+frontend/.build/
+frontend/.test-next/

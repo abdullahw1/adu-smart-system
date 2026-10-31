@@ -1,20 +1,24 @@
+import { authorize } from '@/server/security.mjs';
 import { createReadStream } from "node:fs";
-import { stat, unlink } from "node:fs/promises";
+import { lstat, unlink } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
-import { FILE_RE, RECORDINGS_DIR, activeRecordings } from "@/lib/recorder";
+import { FILE_RE, RECORDINGS_DIR, recordingBusy } from "@/lib/recorder";
 
 type Ctx = { params: Promise<{ file: string }> };
 
 // Serves a recording with Range support so the browser's player can seek.
 export async function GET(request: Request, { params }: Ctx) {
+  const denied = await authorize(request, "viewer"); if (denied) return denied;
   const { file } = await params;
   if (!FILE_RE.test(file)) return new Response("Not found", { status: 404 });
   const full = path.join(RECORDINGS_DIR, file);
 
   let size: number;
   try {
-    size = (await stat(full)).size;
+    const info = await lstat(full);
+    if (!info.isFile()) return new Response('Not found', { status: 404 });
+    size = info.size;
   } catch {
     return new Response("Not found", { status: 404 });
   }
@@ -45,10 +49,11 @@ export async function GET(request: Request, { params }: Ctx) {
   return new Response(toWeb(createReadStream(full)), { headers });
 }
 
-export async function DELETE(_request: Request, { params }: Ctx) {
+export async function DELETE(request: Request, { params }: Ctx) {
+  const denied = await authorize(request, "admin"); if (denied) return denied;
   const { file } = await params;
   if (!FILE_RE.test(file)) return Response.json({ error: "Not found" }, { status: 404 });
-  if (Object.values(activeRecordings()).some((r) => r.file === file)) {
+  if (recordingBusy(file)) {
     return Response.json({ error: "Stop the recording first" }, { status: 409 });
   }
   try {

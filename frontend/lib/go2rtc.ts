@@ -10,60 +10,16 @@ export type Camera = {
 
 const SUB_SUFFIX = "_sub";
 
-export function go2rtcBase(): string {
-  const configured = process.env.NEXT_PUBLIC_GO2RTC_URL;
-  if (configured) return configured.replace(/\/+$/, "");
-  return `${window.location.protocol}//${window.location.hostname}:1984`;
-}
-
+// Streaming stays on the authenticated app origin in development and production.
+export function go2rtcBase(): string { return window.location.origin; }
 export function streamUrl(base: string, src: string): string {
-  return `${base}/api/ws?src=${encodeURIComponent(src)}`;
+  const url = new URL('/live/ws', base);
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  url.searchParams.set('src', src);
+  return url.toString();
 }
-
-export async function fetchCameras(base: string): Promise<Camera[]> {
-  const res = await fetch(`${base}/api/streams`, { cache: "no-store" });
-  if (!res.ok) throw new Error(`go2rtc returned ${res.status}`);
-  const names = Object.keys((await res.json()) ?? {});
-  const all = new Set(names);
-
-  return names
-    .filter((name) => !name.endsWith(SUB_SUFFIX))
-    .sort()
-    .map((id) => ({
-      id,
-      label: toLabel(id),
-      gridSrc: all.has(id + SUB_SUFFIX) ? id + SUB_SUFFIX : id,
-      mainSrc: id,
-    }));
-}
-
-function toLabel(id: string): string {
-  return id
-    .split("_")
-    .filter(Boolean)
-    .map((w) => w[0].toUpperCase() + w.slice(1))
-    .join(" ");
-}
-
-// go2rtc serves its own player (<video-stream>, MIT). Load it straight from the
-// server as a module script so it always matches the server version and the
-// bundler never touches it.
-let playerReady: Promise<void> | null = null;
-
-export function loadPlayer(base: string): Promise<void> {
-  if (!playerReady) {
-    playerReady = new Promise((resolve, reject) => {
-      const script = document.createElement("script");
-      script.type = "module";
-      script.src = `${base}/video-stream.js`;
-      script.onerror = () => {
-        playerReady = null;
-        script.remove();
-        reject(new Error(`Could not load player from ${base}`));
-      };
-      document.head.appendChild(script);
-      customElements.whenDefined("video-stream").then(() => resolve());
-    });
-  }
-  return playerReady;
+export async function fetchCameras(_base?: string): Promise<Camera[]> {
+  const res = await fetch('/api/cameras', { cache: 'no-store' });
+  if (!res.ok) throw new Error('Camera service unavailable');
+  return res.json();
 }

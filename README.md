@@ -2,6 +2,23 @@
 
 A local-first security, networking, and smart-home platform for accessory dwelling units. Built for a family ADU first; designed to be repeatable for other homeowners and builders later.
 
+
+## Current setup and deployment
+
+See [deployment and security instructions](docs/deployment.md) for owner setup,
+viewer/admin permissions, SQLite migration, protected streaming, Ubuntu disk
+mount safeguards, Frigate recording, Tailscale HTTPS access and health alerts.
+The production Compose stack is for Ubuntu; the dev stack runs standalone
+go2rtc on the Mac. Start the app with `npm run dev` from `frontend`, then open
+http://localhost:3000/setup to create the owner account locally. No default
+password is shipped.
+
+The app includes manual recording, camera settings, a Frigate history timeline
+and time-range downloads when Frigate is configured. Continuous recording and
+remote access still require installation and acceptance testing on the Ubuntu
+server with its HDD. Older planning sections below describe the original
+phases; the deployment guide is authoritative for commands and configuration.
+
 ## Table of contents
 
 - [Goals](#goals)
@@ -37,7 +54,7 @@ A local-first security, networking, and smart-home platform for accessory dwelli
 |---|---|---|
 | Cameras | 5x Anpviz IPC-D3243W-S, 4MP PoE, ONVIF/RTSP | H.265 main stream, H.264 sub-stream |
 | Cabling | Cat6A F/UTP shielded, 9 runs (5 camera, 4 room) | Shielded end-to-end: jacks, plugs, patch panel |
-| PoE switch | TP-Link TL-SG1218MPE, 16-port PoE+, gigabit | 802.1Q VLAN tagging, 192W PoE budget |
+| PoE switch | TP-Link TL-SG1016PE, 16 gigabit ports, 8 PoE+ | 802.1Q VLAN tagging, 150W PoE budget |
 | Router | TP-Link Omada ER605 | VLANs, inter-VLAN firewall/ACLs |
 | Access point | TP-Link Omada EAP610 | WiFi 6, SSID-to-VLAN mapping |
 | Edge server | N100/N95-class mini PC, 16GB RAM, 512GB NVMe | Runs Frigate + backend; Quick Sync decode, OpenVINO-ready for v3 AI |
@@ -133,14 +150,14 @@ Open http://localhost:3000 (or `http://<laptop-ip>:3000` from a phone). Click a 
 
 **Camera settings:** in a camera's expanded view, **Settings** opens its date/time (per-camera or all at once), day/night, brightness/contrast/color/sharpness, WDR, backlight, and vertical flip, all over ONVIF using the `CAMxx_HOST`/`CAM_USER`/`CAM_PASSWORD` values from the repo-root `.env`. These Anpviz cameras only store a fixed UTC offset (they ignore DST rules), so after a daylight-saving change the page flags the clock as wrong. Press Apply to fix it.
 
-In production the app points at Frigate's bundled go2rtc instead (same port 1984); set `NEXT_PUBLIC_GO2RTC_URL` in `frontend/.env.local` if it isn't on the same host as the app.
+In production the server points at Frigate's bundled go2rtc; configure the server-only `GO2RTC_API_URL` and `GO2RTC_RTSP_URL` when needed. Browsers always use the authenticated app origin.
 
 ## Getting started
 
 1. Flash Debian to the edge server, disable onboard Wi-Fi in BIOS/OS (server should only be reachable over its wired VLAN interfaces).
 2. Install Docker + Docker Compose.
 3. Copy `docs/frigate-config.example.yml` to `frigate/config.yml`, fill in each camera's RTSP credentials and ONVIF details.
-4. `docker compose up -d` to bring up Frigate, Mosquitto, and Caddy.
+4. Follow `docs/deployment.md` to start Frigate and the app through the mount-checked systemd service.
 5. Confirm all 5 cameras are recording and live view works in Frigate's own UI before building anything on top.
 6. Configure the router (ER605) VLANs and firewall rules per the table above.
 7. Configure the AP (EAP610) SSID-to-VLAN mapping.

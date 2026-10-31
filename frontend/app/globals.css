@@ -283,3 +283,21 @@ button:disabled { opacity: 0.5; cursor: default; }
   .field.slider { grid-template-columns: 1fr 3ch; }
   .field.slider > span { grid-column: 1 / -1; }
 }
+
+.access-form { max-width: 460px; margin: 8vh auto; }
+.access-form label { display: grid; gap: 8px; }
+.access-form input, .access-form select, .expanded select, .history-filter input, .history-filter select {
+  font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 8px; min-width: 0;
+}
+.nav { align-items: center; flex-wrap: wrap; }
+.nav .sign-out { margin-left: auto; font-size: .8rem; }
+.expanded header { flex-wrap: wrap; }
+.expanded { overflow-y: auto; }
+.badge-reconnecting::before, .badge-unsupported::before { background: var(--warn); }
+.history-filter { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin-bottom: 16px; }
+.history-filter label { display: grid; gap: 6px; }
+.storage-status { color: var(--muted); margin: 12px 0 20px; }
+@media (max-width: 600px) { .expanded header { gap: 8px; } .expanded .player { flex-shrink: 0; } }
+.timeline { position: relative; height: 40px; background: var(--surface); border: 1px solid var(--border); border-radius: 5px; overflow: hidden; }
+.timeline button { position: absolute; top: 0; bottom: 0; padding: 0; min-width: 2px; border: 0; border-radius: 0; background: var(--live); }
+.timeline-labels { display: flex; justify-content: space-between; color: var(--muted); font-size: .8rem; }

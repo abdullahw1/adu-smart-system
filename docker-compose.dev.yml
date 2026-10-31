@@ -12,7 +12,5 @@ services:
     volumes:
       - ./go2rtc/go2rtc.yaml:/config/go2rtc.yaml:ro
     ports:
-      - "1984:1984"      # API + browser streams (MSE/WebSocket)
-      - "8554:8554"      # RTSP restream
-      - "8555:8555/tcp"  # WebRTC
-      - "8555:8555/udp"
+      - "127.0.0.1:1984:1984"      # API + browser streams (MSE/WebSocket)
+      - "127.0.0.1:8554:8554"      # RTSP restream

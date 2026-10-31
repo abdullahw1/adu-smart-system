@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useSession } from "@/lib/session";
 import { fetchCameraNames, type CameraNames } from "@/lib/cameraNames";
 import {
   deleteRecording,
@@ -10,6 +11,7 @@ import {
 } from "@/lib/recordings";
 
 export function RecordingList() {
+  const user = useSession();
   const [data, setData] = useState<Recordings | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [names, setNames] = useState<CameraNames>({});
@@ -58,13 +60,13 @@ export function RecordingList() {
   const activeFiles = new Set(Object.values(data.active).map((r) => r.file));
 
   return (
-    <ul className="recordings">
+    <><p role="status" className="error-text">{error}</p><ul className="recordings">
       {data.files.map((rec) => {
         const live = activeFiles.has(rec.file);
         return (
           <li key={rec.file}>
             <div className="recording-row">
-              <span className="recording-camera">{names[rec.camera] ?? rec.camera}</span>
+              <span className="recording-camera">{names[rec.camera] || rec.camera}</span>
               <span className="muted">{new Date(rec.createdAt).toLocaleString()}</span>
               <span className="muted">{formatSize(rec.size)}</span>
               {live && <span className="rec-inline">REC</span>}
@@ -75,7 +77,7 @@ export function RecordingList() {
                 <a className="button" href={recordingUrl(rec.file, true)}>
                   Download
                 </a>
-                <button onClick={() => remove(rec.file)} disabled={live}>
+                <button onClick={() => remove(rec.file)} disabled={live || user?.role !== "admin"}>
                   Delete
                 </button>
               </span>
@@ -86,7 +88,7 @@ export function RecordingList() {
           </li>
         );
       })}
-    </ul>
+    </ul></>
   );
 }
 

@@ -1,17 +1,21 @@
+import { authorize } from '@/server/security.mjs';
 import {
   CAMERA_ID_RE,
+  recordingErrors,
   activeRecordings,
   listRecordings,
   startRecording,
   stopRecording,
 } from "@/lib/recorder";
 
-export async function GET() {
-  return Response.json({ active: activeRecordings(), files: await listRecordings() });
+export async function GET(request: Request) {
+  const denied = await authorize(request, "viewer"); if (denied) return denied;
+  return Response.json({ active: activeRecordings(), files: await listRecordings(), errors: recordingErrors() });
 }
 
 // Body: { id: "cam_01", action: "start" | "stop" }
 export async function POST(request: Request) {
+  const denied = await authorize(request, "admin"); if (denied) return denied;
   let body: unknown;
   try {
     body = await request.json();

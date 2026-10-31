@@ -225,11 +225,18 @@ function ImageSection({
   const pending = useRef<SettingsPatch>({});
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
-  useEffect(() => () => clearTimeout(timer.current), []);
+  const saves = useRef(Promise.resolve());
+  const mounted = useRef(true);
+  const revision = useRef(0);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; clearTimeout(timer.current); flush(); };
+  }, []);
 
   // Sliders fire on every pixel of movement; batch changes and send once the
   // user pauses so the camera isn't flooded.
   const queue = (patch: SettingsPatch, delayMs = 400) => {
+    revision.current++;
     pending.current = {
       ...pending.current,
       ...patch,
@@ -239,20 +246,29 @@ function ImageSection({
     timer.current = setTimeout(flush, delayMs);
   };
 
-  const flush = async () => {
+  const flush = () => {
     const patch = pending.current;
     pending.current = {};
     if (patch.image && Object.keys(patch.image).length === 0) delete patch.image;
     if (!patch.image && patch.flip === undefined) return;
-    setSave({ state: "saving" });
-    try {
-      onSaved(await updateCameraSettings(id, patch));
-      setSave({ state: "saved" });
-    } catch (err) {
-      setSave({ state: "error", message: (err as Error).message });
-      setImage(settings.image);
-      setFlip(settings.flip);
-    }
+    const sentRevision = revision.current;
+    saves.current = saves.current.catch(() => {}).then(async () => {
+      if (mounted.current) setSave({ state: "saving" });
+      try {
+        const result = await updateCameraSettings(id, patch);
+        if (mounted.current) {
+          onSaved(result);
+          if (revision.current === sentRevision) {
+            setImage(result.image); setFlip(result.flip); setSave({ state: "saved" });
+          }
+        }
+      } catch (err) {
+        if (mounted.current && revision.current === sentRevision) {
+          setSave({ state: "error", message: (err as Error).message });
+          setImage(settings.image); setFlip(settings.flip);
+        }
+      }
+    });
   };
 
   const setLevel = (key: (typeof LEVELS)[number]["key"], value: number) => {
