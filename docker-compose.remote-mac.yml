@@ -1,0 +1,13 @@
+# Temporary outbound-only tunnel. No camera or app ports are published.
+services:
+  tunnel:
+    image: jpillora/chisel:1.13.0
+    container_name: adu-camera-tunnel
+    restart: unless-stopped
+    env_file: ./runtime/railway-client.env
+    command:
+      - client
+      - --fingerprint
+      - tmTb8EPcaqYPjqTrBVd7mg2RHTbiD3RRay73BxDlm4w=
+      - https://camera-gateway-production-e10c.up.railway.app
+      - R:127.0.0.1:3001:host.docker.internal:3000

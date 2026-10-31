@@ -51,7 +51,8 @@ export function sameOrigin(headers) {
   if (!origin) return false;
   try {
     const expected = process.env.APP_ORIGIN;
-    return expected ? new URL(origin).origin === new URL(expected).origin
+    const allowed = [expected, ...(process.env.APP_ADDITIONAL_ORIGINS || '').split(',')].filter(Boolean);
+    return expected ? allowed.some(value => new URL(origin).origin === new URL(value).origin)
       : new URL(origin).host === header(headers, 'host') && ['http:', 'https:'].includes(new URL(origin).protocol);
   } catch { return false; }
 }

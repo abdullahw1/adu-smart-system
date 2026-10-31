@@ -26,6 +26,38 @@ or stopping the app interrupts remote access; the tunnel reconnects when
 connectivity returns. Railway relays video and incurs compute/network usage.
 This is temporary until the Ubuntu mini PC is configured.
 
+## This Mac's deployment
+
+Public URL: https://camera-gateway-production-e10c.up.railway.app
+
+The production app uses the same frontend/data account database as local
+development. No new user password is provisioned by the gateway. Sign in with
+the existing camera-app account. Runtime/mac-remote.env configures the exact
+public origin and explicitly allows localhost:3000 and 127.0.0.1:3000 as
+additional trusted origins. HTTPS session cookies have Secure enabled.
+
+To restart after quitting the app or rebooting, start Docker Desktop, then
+run these commands from the repository root (Node 22.22 is required):
+
+```sh
+docker compose -f docker-compose.dev.yml up -d
+docker compose -f docker-compose.remote-mac.yml up -d
+sh deploy/start-mac-remote.sh
+```
+
+Leave the last command running. It uses the previously built .build output.
+After frontend code changes, stop the app and rebuild with
+`cd frontend && NEXT_DIST_DIR=.build npm run build` before starting again.
+Do not run the dev server and production server on port 3000 simultaneously.
+After a reboot the app must be started again; it is not an installed macOS
+login service. For temporary idle-sleep prevention, run the start command
+under `caffeinate -i`; closing a MacBook lid can still interrupt service.
+
+Deployment checks: the public gateway redirects anonymous page requests to
+/login, rejects anonymous cameras/recordings/settings with 401, and rejects
+owner bootstrap through the gateway with 403. Verify live feeds after signing
+in, then repeat on a phone over cellular with home Wi-Fi disabled.
+
 To disable remote access, stop/remove the adu-camera-tunnel container and
 remove the Railway domain or stop its service. Rotate TUNNEL_SECRET in both
 places if the client env file is disclosed. Do not commit runtime credentials.

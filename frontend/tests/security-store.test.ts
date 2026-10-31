@@ -35,3 +35,13 @@ test('passwords are hashed, sessions revoke, roles and mutation origins are enfo
   assert.equal((await security.authorize(forged, 'admin'))?.status, 403);
   security.logout(headers); assert.equal(security.session(headers), null);
 });
+
+test('remote deployment accepts only the configured origin and explicit local origins', () => {
+  process.env.APP_ORIGIN = 'https://cameras.example.test';
+  process.env.APP_ADDITIONAL_ORIGINS = 'http://localhost:3000,http://127.0.0.1:3000';
+  try {
+    for (const origin of ['https://cameras.example.test', 'http://localhost:3000', 'http://127.0.0.1:3000']) assert.equal(security.sameOrigin({ origin }), true);
+    for (const origin of ['https://attacker.example', 'http://localhost:3001', 'https://cameras.example.test.attacker.test']) assert.equal(security.sameOrigin({ origin }), false);
+    assert.match(security.cookie('test'), /; Secure$/);
+  } finally { delete process.env.APP_ORIGIN; delete process.env.APP_ADDITIONAL_ORIGINS; }
+});
