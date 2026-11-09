@@ -19,6 +19,10 @@ remote access still require installation and acceptance testing on the Ubuntu
 server with its HDD. Older planning sections below describe the original
 phases; the deployment guide is authoritative for commands and configuration.
 
+The plan for growing this into a home automation platform (door, appliance
+and air-quality status, alerting, a TV dashboard and phone access) is in
+[home automation architecture](docs/home-automation-architecture.md).
+
 ## Table of contents
 
 - [Goals](#goals)
@@ -45,8 +49,8 @@ phases; the deployment guide is authoritative for commands and configuration.
 | Phase | What ships | Status |
 |---|---|---|
 | v1 — Hardware & recording | 5 cameras recording 24/7, VLANs, Frigate, remote viewing via tunnel, UPS, health alerts. No AI — continuous recording + Frigate motion detection only. | In progress — task breakdown: [`docs/v1-tasks.md`](docs/v1-tasks.md), target Sun Sept 27, 2026 |
-| v2 — Homeowner app | FastAPI backend + Next.js web app: accounts, live grid, timeline, clip export, TV-browser support. | Planned |
-| v3 — Expansion | Object detection (OpenVINO), sensor integrations (smoke/CO/gas/flood/door/stove) via the server API, off-site backup, installer image. | Planned |
+| v2 — Homeowner app | Node + Next.js web app (SQLite): accounts, live grid, timeline, clip export, TV-browser support. | Planned |
+| v3 — Expansion | Object detection (OpenVINO), sensor integrations (smoke/CO/gas/flood/door/stove, air quality, appliances) via Home Assistant, alerting, TV dashboard, off-site backup, installer image. See [`docs/home-automation-architecture.md`](docs/home-automation-architecture.md). | Planned |
 
 ## Hardware
 
@@ -87,7 +91,8 @@ See [`docs/firewall-matrix.md`](docs/firewall-matrix.md) for the full source/des
 | NVR | Frigate (+ go2rtc) | MIT | RTSP ingest, recording, live view, events |
 | Messaging | Mosquitto (MQTT) | EPL/EDL | Frigate events now, sensors in v3 |
 | Proxy / auth | Caddy | Apache-2.0 | HTTPS + login in front of the UI |
-| Backend (v2) | FastAPI + PostgreSQL | MIT / PostgreSQL | Auth, camera config, clip metadata |
+| Backend (v2) | Node server + SQLite (`node:sqlite`) | MIT / Public domain | Auth, camera config, clip metadata, alerts (replaces the earlier FastAPI + PostgreSQL plan) |
+| Device hub (v3) | Home Assistant Core + Zigbee2MQTT | Apache-2.0 / GPL-3.0 (separate process) | Sensor and appliance integrations, safety automations |
 | Frontend (v2) | Next.js / React (PWA) | MIT | Phone, laptop, and TV-browser app |
 | Remote access | Tailscale | Free tier | Encrypted tunnel, no open ports |
 | Health | smartmontools, NUT, Uptime Kuma | GPL / MIT | Disk, UPS, and service alerts |
@@ -127,11 +132,11 @@ flowchart LR
 ├── go2rtc/go2rtc.yaml           # dev go2rtc streams (creds come from .env)
 ├── docs/
 │   ├── firewall-matrix.md       # full VLAN source/destination rules
+│   ├── home-automation-architecture.md  # single-pane-of-glass plan
 │   └── frigate-config.example.yml
 ├── frigate/
 │   └── config.yml               # actual Frigate config (gitignored: has credentials)
-├── backend/                     # v2 — FastAPI app
-└── frontend/                    # v2 — Next.js app (live camera grid)
+└── frontend/                    # v2 — Node server + Next.js app (live camera grid)
 ```
 
 ## Live view (dev)
