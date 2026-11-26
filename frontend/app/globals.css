@@ -346,6 +346,15 @@ button:disabled { opacity: 0.5; cursor: default; }
 /* Box touches the top of the frame: put the caption inside it instead */
 .detection-caption-inside { bottom: auto; top: 0; margin: 0; border-radius: 0 0 3px 0; }
 .detection-compact { border-width: 1.5px; }
+/* Patient watch (cam_03 prototype): body, hand gestures, zone/offline alerts.
+   Updates arrive ~5x a second, so boxes glide over a shorter time. */
+.detection-patient { --c: var(--detect-person); transition-duration: 0.2s; }
+.detection-gesture { --c: #ff9f0a; border-width: 3px; transition-duration: 0.2s; }
+.detection-gesture .detection-caption { font-size: 0.95rem; }
+.detection-alert { --c: #ff453a; border-width: 3px; transition: none; animation: detection-pulse 1s ease-in-out infinite; }
+.detection-alert .detection-caption { font-size: 1rem; color: #fff; }
+@keyframes detection-pulse { 50% { box-shadow: inset 0 0 0 4px rgb(255 69 58 / 0.5); } }
+@media (prefers-reduced-motion: reduce) { .detection-alert { animation: none; } }
 .detection-compact .detection-caption { font-size: 0.68rem; padding: 1px 4px; }
 
 /* Recording playback with saved detection captions (RecordingPlayer) */

@@ -12,4 +12,10 @@ export class DetectionTracker {
   prune(now?: number): boolean;
   snapshot(): Record<string, LiveObject[]>;
 }
-export function startDetections(options: { mqttUrl: string; apiUrl: string; onChange: (snapshot: Record<string, LiveObject[]>) => void }): { tracker: DetectionTracker; stop: () => void };
+export class PatientWatch {
+  apply(topic: string, text: string, now?: number): boolean;
+  isLive(camera: string, now?: number): boolean;
+  tick(now?: number): boolean;
+  merge(snapshot: Record<string, LiveObject[]>, now?: number): Record<string, LiveObject[]>;
+}
+export function startDetections(options: { mqttUrl: string; apiUrl: string; onChange: (snapshot: Record<string, LiveObject[]>) => void }): { tracker: DetectionTracker; watch: PatientWatch; stop: () => void };

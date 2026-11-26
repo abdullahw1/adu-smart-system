@@ -69,7 +69,7 @@ cameras:
           input_args: preset-rtsp-generic
           roles: [detect]
   cam_03:
-    enabled: false # camera disconnected; set true when it's back on the network
+    enabled: true
     ffmpeg:
       inputs:
         - path: 

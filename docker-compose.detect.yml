@@ -45,3 +45,20 @@ services:
       - ./frigate-detect/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
     ports:
       - "127.0.0.1:1883:1883" # the app subscribes to frigate/# from the host
+
+  # Prototype: hand gestures (waving, raised hand, hand signs) and "patient
+  # left the zone" captions for one camera, shown in the app's live view.
+  # Captions only, no notifications. Zone: draw one named patient_area on the
+  # camera in the Frigate UI; without it, leaving the frame is the trigger.
+  patient-watch:
+    container_name: patient-watch
+    build: ./patient-watch
+    restart: unless-stopped
+    network_mode: host # reaches go2rtc RTSP (127.0.0.1:8554), MQTT (1883) and the Frigate API (5000)
+    environment:
+      CAMERA: cam_03
+      PATIENT_ZONE: patient_area
+      SENSITIVITY: high # high | normal | low
+      FPS: "10"
+    depends_on:
+      - mqtt

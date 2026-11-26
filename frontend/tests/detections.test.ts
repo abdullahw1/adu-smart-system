@@ -48,3 +48,30 @@ test('tracker ignores malformed messages and drops objects that never ended', ()
   assert.equal(tracker.prune(31_000), true);
   assert.deepEqual(tracker.snapshot(), {});
 });
+
+test('patient watch replaces the person box with its captions while live', async () => {
+  const { PatientWatch } = await import('../server/detections.mjs');
+  const watch = new PatientWatch();
+  const frigate = { cam_03: [{ id: 'f1', label: 'person', caption: 'Person standing', score: 0.9, box: [0, 0, 1, 1] }] };
+  const message = JSON.stringify({ camera: 'cam_03', objects: [
+    { id: 'patient', label: 'patient', caption: 'Patient still', box: [0.1, 0.1, 0.5, 0.8] },
+    { id: 'wave', label: 'gesture', caption: 'Waving - may need help', box: [0.6, 0.1, 0.2, 0.2] },
+    { id: 'x', label: 'script', caption: 'not allowed', box: [0, 0, 1, 1] },
+  ] });
+  assert.equal(watch.apply('adu/watch/cam_03', message, 1000), true);
+  assert.deepEqual(watch.merge(frigate, 1500).cam_03.map(o => o.caption), ['Patient still', 'Waving - may need help']);
+  assert.equal(watch.apply('frigate/events', '{}'), false);
+});
+
+test('patient watch shows an alert when it goes quiet or loses video', async () => {
+  const { PatientWatch } = await import('../server/detections.mjs');
+  const watch = new PatientWatch();
+  watch.apply('adu/watch/cam_03', JSON.stringify({ objects: [] }), 0);
+  assert.equal(watch.tick(0), true);
+  assert.deepEqual(watch.merge({}, 1000).cam_03, []);
+  assert.equal(watch.tick(5000), true); // no message for 5 s
+  assert.equal(watch.merge({}, 5000).cam_03[0].caption, 'Patient monitor offline');
+  watch.apply('adu/watch/cam_03/status', 'no_video', 6000);
+  assert.equal(watch.merge({}, 6000).cam_03[0].caption, 'Patient monitor: no video');
+  assert.deepEqual(watch.merge({ cam_01: [] }, 6000).cam_01, []); // other cameras untouched
+});

@@ -103,18 +103,84 @@ async function loadFrames(apiUrl) {
   } catch { return {}; }
 }
 
+// Captions from the patient-watch service (../patient-watch) for cameras it
+// covers: the patient's body, hand gestures and "left the zone" alerts. It
+// publishes adu/watch/<camera> several times a second and a retained
+// adu/watch/<camera>/status (online | no_video | offline). On those cameras
+// its patient box replaces Frigate's person box. If it stops or loses video,
+// an alert caption says so: a silent monitor must not look like a calm room.
+const WATCH_STALE_MS = 3000;
+const WATCH_LABELS = new Set(['patient', 'gesture', 'alert']);
+
+export class PatientWatch {
+  constructor() { this.cameras = new Map(); this.live = new Map(); }
+
+  apply(topic, text, now = Date.now()) {
+    const match = /^adu\/watch\/([\w-]+)(\/status)?$/.exec(topic);
+    if (!match) return false;
+    const state = this.cameras.get(match[1]) || { objects: [], seen: 0, status: 'unknown' };
+    this.cameras.set(match[1], state);
+    if (match[2]) {
+      state.status = String(text).trim();
+      if (state.status !== 'online') state.objects = [];
+      return true;
+    }
+    let data;
+    try { data = JSON.parse(text); } catch { return false; }
+    state.objects = (Array.isArray(data?.objects) ? data.objects : [])
+      .filter(o => o && WATCH_LABELS.has(o.label) && typeof o.caption === 'string' && Array.isArray(o.box) && o.box.length === 4)
+      .map(o => ({ id: `${match[1]}-${String(o.id)}`, label: o.label, caption: o.caption.slice(0, 80), score: Number(o.score) || 1,
+        box: o.box.map(v => Math.min(1, Math.max(0, Number(v) || 0))) }));
+    state.seen = now;
+    state.status = 'online';
+    return true;
+  }
+
+  isLive(camera, now = Date.now()) {
+    const state = this.cameras.get(camera);
+    return Boolean(state && state.status === 'online' && now - state.seen <= WATCH_STALE_MS);
+  }
+
+  // True when a camera's monitor went quiet or came back since the last tick.
+  tick(now = Date.now()) {
+    let changed = false;
+    for (const camera of this.cameras.keys()) {
+      const live = this.isLive(camera, now);
+      if (this.live.get(camera) !== live) { this.live.set(camera, live); changed = true; }
+    }
+    return changed;
+  }
+
+  // Merges into a Frigate snapshot ({ camera: objects[] }).
+  merge(snapshot, now = Date.now()) {
+    const out = { ...snapshot };
+    for (const [camera, state] of this.cameras) {
+      if (this.isLive(camera, now)) {
+        out[camera] = [...(out[camera] || []).filter(o => o.label !== 'person'), ...state.objects];
+      } else {
+        const caption = state.status === 'no_video' ? 'Patient monitor: no video' : 'Patient monitor offline';
+        out[camera] = [...(out[camera] || []), { id: `${camera}-watch-offline`, label: 'alert', caption, score: 1, box: [0, 0, 1, 1] }];
+      }
+    }
+    return out;
+  }
+}
+
 // Connects to Frigate's MQTT broker and calls onChange(snapshot) when the set
 // of objects changes. Reconnects quietly if Frigate isn't running yet.
 export function startDetections({ mqttUrl, apiUrl, onChange }) {
   const tracker = new DetectionTracker();
-  const emit = () => onChange(tracker.snapshot());
+  const watch = new PatientWatch();
+  const emit = () => onChange(watch.merge(tracker.snapshot()));
   loadFrames(apiUrl).then(frames => { tracker.frames = frames; });
   const client = mqtt.connect(mqttUrl, { reconnectPeriod: 10_000, connectTimeout: 5000, clientId: 'adu-app-' + process.pid });
-  client.on('connect', () => client.subscribe('frigate/events'));
+  client.on('connect', () => client.subscribe(['frigate/events', 'adu/watch/#']));
   client.on('error', () => {}); // offline Frigate is normal; mqtt keeps retrying
-  client.on('message', (_topic, payload) => {
-    try { if (tracker.apply(JSON.parse(payload.toString()))) emit(); } catch { /* ignore malformed */ }
+  client.on('message', (topic, payload) => {
+    try {
+      if (topic === 'frigate/events' ? tracker.apply(JSON.parse(payload.toString())) : watch.apply(topic, payload.toString())) emit();
+    } catch { /* ignore malformed */ }
   });
-  const timer = setInterval(() => { if (tracker.prune()) emit(); }, 5000);
-  return { tracker, stop: () => { clearInterval(timer); client.end(true); } };
+  const timer = setInterval(() => { if (tracker.prune() | watch.tick()) emit(); }, 1000);
+  return { tracker, watch, stop: () => { clearInterval(timer); client.end(true); } };
 }
