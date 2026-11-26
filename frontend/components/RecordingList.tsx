@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useSession } from "@/lib/session";
+import { RecordingPlayer } from "@/components/RecordingPlayer";
+import { CaptionedDownload } from "@/components/CaptionedDownload";
 import { fetchCameraNames, type CameraNames } from "@/lib/cameraNames";
 import {
   deleteRecording,
@@ -77,13 +79,14 @@ export function RecordingList() {
                 <a className="button" href={recordingUrl(rec.file, true)}>
                   Download
                 </a>
+                {rec.captions && <CaptionedDownload file={rec.file} disabled={live} />}
                 <button onClick={() => remove(rec.file)} disabled={live || user?.role !== "admin"}>
                   Delete
                 </button>
               </span>
             </div>
             {playing === rec.file && (
-              <video className="recording-video" src={recordingUrl(rec.file)} controls autoPlay />
+              <RecordingPlayer file={rec.file} />
             )}
           </li>
         );

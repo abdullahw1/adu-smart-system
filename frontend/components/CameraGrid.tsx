@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useSession } from "@/lib/session";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { LivePlayer, type PlayerStatus } from "@/components/LivePlayer";
+import { DetectionOverlay } from "@/components/DetectionOverlay";
 import { fetchCameraNames, saveCameraName, type CameraNames } from "@/lib/cameraNames";
 import { fetchCameras, go2rtcBase, type Camera } from "@/lib/go2rtc";
 import {
@@ -135,6 +136,7 @@ function Tile({
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(); } }}
     >
       <LivePlayer base={base} src={camera.gridSrc} onStatus={setStatus} />
+      {status === "live" && <DetectionOverlay camera={camera.id} compact />}
       <span className="tile-label">{camera.label}</span>
       {recording && <span className="rec-badge">REC</span>}
       <StatusBadge status={status} />
@@ -201,7 +203,10 @@ function Expanded({
             ✕
           </button>
         </header>
-        <LivePlayer key={src} base={base} src={src} controls muted onStatus={handleStatus} />
+        <div className="video-stage">
+          <LivePlayer key={src} base={base} src={src} controls muted onStatus={handleStatus} />
+          {status === "live" && <DetectionOverlay camera={camera.id} />}
+        </div>
       </div>
     </div>
   );

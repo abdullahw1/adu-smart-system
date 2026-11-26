@@ -43,5 +43,10 @@ test('remote deployment accepts only the configured origin and explicit local or
     for (const origin of ['https://cameras.example.test', 'http://localhost:3000', 'http://127.0.0.1:3000']) assert.equal(security.sameOrigin({ origin }), true);
     for (const origin of ['https://attacker.example', 'http://localhost:3001', 'https://cameras.example.test.attacker.test']) assert.equal(security.sameOrigin({ origin }), false);
     assert.match(security.cookie('test'), /; Secure$/);
+    // Secure follows the sign-in origin: HTTPS remote yes, plain-HTTP local no
+    // (browsers withhold Secure cookies from ws:// live video).
+    assert.match(security.cookie('test', false, { origin: 'https://cameras.example.test' }), /; Secure$/);
+    assert.doesNotMatch(security.cookie('test', false, { origin: 'http://localhost:3000' }), /Secure/);
+    assert.doesNotMatch(security.cookie('', true, { origin: 'http://127.0.0.1:3000' }), /Secure/);
   } finally { delete process.env.APP_ORIGIN; delete process.env.APP_ADDITIONAL_ORIGINS; }
 });

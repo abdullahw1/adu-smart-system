@@ -1,19 +1,58 @@
 import { createServer } from 'node:http';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import next from 'next';
 import { WebSocket, WebSocketServer } from 'ws';
 import { configured, createUser, login, session, logout, sameOrigin, cookie } from './server/security.mjs';
 import { db } from './server/store.mjs';
 import { allowedStream, upstreamBase } from './server/cameras.mjs';
+import { startDetections } from './server/detections.mjs';
 
 const dev = process.env.NODE_ENV !== 'production';
 const port = Number(process.env.PORT || 3000);
 const hostname = process.env.HOST || '127.0.0.1';
-const app = next({ dev, hostname, port, conf: { distDir: process.env.NEXT_DIST_DIR || '.next' } });
+const distDir = process.env.NEXT_DIST_DIR || '.next';
+const app = next({ dev, hostname, port, conf: { distDir } });
 await app.prepare();
 const handle = app.getRequestHandler();
 const upgrade = app.getUpgradeHandler();
 const attempts = new Map();
 const wss = new WebSocketServer({ noServer: true, maxPayload: 4096 });
+
+// Identifies the code this server is running. Sent on every live-feed
+// connection; open pages reload themselves when it changes after a deploy.
+let buildId = 'dev-' + Date.now();
+if (!dev) try { buildId = readFileSync(path.join(distDir, 'BUILD_ID'), 'utf8').trim(); } catch { /* keep fallback */ }
+
+// Live detections (boxes + captions) pushed to signed-in browsers over SSE.
+const detectionClients = new Set();
+let detections = {};
+const detector = startDetections({
+  mqttUrl: process.env.FRIGATE_MQTT_URL || 'mqtt://127.0.0.1:1883',
+  apiUrl: process.env.FRIGATE_DETECT_API_URL || process.env.FRIGATE_API_URL || 'http://127.0.0.1:5000',
+  onChange: snapshot => {
+    detections = snapshot;
+    const frame = `data: ${JSON.stringify(snapshot)}\n\n`;
+    for (const client of detectionClients) client.res.write(frame);
+    for (const listener of detectionListeners) { try { listener(snapshot); } catch { /* a listener must not break the feed */ } }
+  },
+});
+// Shared with lib/recorder.ts (same process) so recordings can save captions.
+const detectionListeners = new Set();
+globalThis.__aduDetections = {
+  current: () => detections,
+  subscribe: listener => { detectionListeners.add(listener); return () => detectionListeners.delete(listener); },
+};
+function detectionStream(req, res) {
+  res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+  res.write(`event: build\ndata: ${JSON.stringify(buildId)}\n\n`);
+  res.write(`data: ${JSON.stringify(detections)}\n\n`);
+  const client = { res };
+  // Heartbeat keeps proxies from idling the stream out; also ends it when the session does.
+  const timer = setInterval(() => { if (!session(req.headers)) return res.end(); res.write(': ping\n\n'); }, 25_000);
+  detectionClients.add(client);
+  res.on('close', () => { clearInterval(timer); detectionClients.delete(client); });
+}
 
 function localSetup(req) {
   const local = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress);
@@ -39,7 +78,7 @@ async function auth(req, res, pathname) {
     if (configured() || !localSetup(req)) return json(res, 403, { error: 'Owner setup is available only on this computer before an account exists.' });
     const { name, password } = await body(req);
     await createUser(name, password, 'admin', true);
-    res.setHeader('Set-Cookie', cookie(await login(name, password)));
+    res.setHeader('Set-Cookie', cookie(await login(name, password), false, req.headers));
     return json(res, 201, { ok: true });
   }
   if (pathname === '/api/auth/login' && req.method === 'POST') {
@@ -54,14 +93,14 @@ async function auth(req, res, pathname) {
     const token = await login(name, password);
     if (!token) return json(res, 401, { error: 'Incorrect username or password' });
     attempts.delete(key);
-    res.setHeader('Set-Cookie', cookie(token));
+    res.setHeader('Set-Cookie', cookie(token, false, req.headers));
     return json(res, 200, { ok: true });
   }
   const user = session(req.headers);
   if (!user) return json(res, 401, { error: 'Sign in to continue' });
   if (pathname === '/api/auth/logout' && req.method === 'POST') {
     logout(req.headers);
-    res.setHeader('Set-Cookie', cookie('', true));
+    res.setHeader('Set-Cookie', cookie('', true, req.headers));
     return json(res, 200, { ok: true });
   }
   if (pathname === '/api/auth/users' && user.role === 'admin') {
@@ -89,6 +128,7 @@ const server = createServer(async (req, res) => {
       return res.end();
     }
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !sameOrigin(req.headers)) return json(res, 403, { error: 'Invalid request origin' });
+    if (url.pathname === '/live/detections' && req.method === 'GET') return detectionStream(req, res);
     return await handle(req, res);
   } catch (error) {
     if (!res.headersSent) json(res, 400, { error: 'Request could not be completed. Check the input and try again.' });
@@ -104,6 +144,8 @@ server.on('upgrade', async (req, socket, head) => {
     const user = session(req.headers);
     const src = url.searchParams.get('src') || '';
     if (!user || !sameOrigin(req.headers) || url.pathname !== '/live/ws' || !await allowedStream(src)) {
+      // Reason only; never log cookies or credentials.
+      console.warn('Live stream refused:', `[${String(req.headers.origin).slice(0, 80)}]`, !user ? (req.headers.cookie ? 'no valid session (cookie present)' : 'no session cookie sent') : !sameOrigin(req.headers) ? `origin not allowed (${String(req.headers.origin).slice(0, 80)})` : url.pathname !== '/live/ws' ? 'wrong path' : 'unknown stream');
       socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n'); return;
     }
     wss.handleUpgrade(req, socket, head, client => {
@@ -143,5 +185,5 @@ server.on('upgrade', async (req, socket, head) => {
   } catch { socket.destroy(); }
 });
 server.listen(port, hostname, () => console.log(`ADU Cameras: http://${hostname}:${port}${configured() ? '' : '/setup'}`));
-async function shutdown() { await globalThis.__aduRecorder?.shutdown(); wss.clients.forEach(client => client.terminate()); server.close(); await app.close(); process.exit(0); }
+async function shutdown() { await globalThis.__aduRecorder?.shutdown(); detector.stop(); detectionClients.forEach(client => client.res.end()); wss.clients.forEach(client => client.terminate()); server.close(); await app.close(); process.exit(0); }
 process.on('SIGINT', shutdown); process.on('SIGTERM', shutdown);

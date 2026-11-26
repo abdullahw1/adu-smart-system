@@ -56,8 +56,14 @@ export function sameOrigin(headers) {
       : new URL(origin).host === header(headers, 'host') && ['http:', 'https:'].includes(new URL(origin).protocol);
   } catch { return false; }
 }
-export function cookie(token, clear = false) {
-  return `${COOKIE}=${clear ? '' : token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${clear ? 0 : 43200}${process.env.APP_ORIGIN?.startsWith('https:') ? '; Secure' : ''}`;
+// Secure follows the origin the user signed in from (already checked by
+// sameOrigin): HTTPS remote access gets Secure cookies, while plain-HTTP local
+// origins (http://localhost:3000) don't. Browsers withhold Secure cookies from
+// ws:// connections, which would break live video on the local address.
+export function cookie(token, clear = false, headers) {
+  let origin = process.env.APP_ORIGIN;
+  try { if (headers && header(headers, 'origin')) origin = new URL(header(headers, 'origin')).origin; } catch { /* keep APP_ORIGIN */ }
+  return `${COOKIE}=${clear ? '' : token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${clear ? 0 : 43200}${origin?.startsWith('https:') ? '; Secure' : ''}`;
 }
 export async function authorize(request, role = 'viewer') {
   const user = session(request.headers);

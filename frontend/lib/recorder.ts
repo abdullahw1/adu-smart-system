@@ -1,5 +1,6 @@
 import { spawn, execFile, type ChildProcess } from 'node:child_process';
 import { mkdir, readdir, lstat, statfs } from 'node:fs/promises';
+import { createWriteStream } from 'node:fs';
 import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
@@ -10,8 +11,36 @@ export const RECORDINGS_DIR = process.env.RECORDINGS_DIR || path.join(process.cw
 export const CAMERA_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 export const FILE_RE = /^[A-Za-z0-9_-]{1,160}\.mp4$/;
 export type ActiveRecording = { file: string; startedAt: number };
-export type RecordingFile = { file: string; camera: string; size: number; createdAt: number };
-type Session = ActiveRecording & { proc: ChildProcess; ready: boolean; stopping?: boolean; exited: Promise<void>; timer?: ReturnType<typeof setInterval> };
+export type RecordingFile = { file: string; camera: string; size: number; createdAt: number; captions: boolean };
+type Session = ActiveRecording & { proc: ChildProcess; ready: boolean; stopping?: boolean; exited: Promise<void>; timer?: ReturnType<typeof setInterval>; stopCaptions?: () => void };
+
+// Live detections from server.mjs (same process). Absent in tests/tools.
+export type CaptionObject = { id: string; label: string; caption: string; score: number; box: number[] };
+type DetectionFeed = { current: () => Record<string, CaptionObject[]>; subscribe: (fn: (s: Record<string, CaptionObject[]>) => void) => () => void };
+const detectionFeed = () => (globalThis as typeof globalThis & { __aduDetections?: DetectionFeed }).__aduDetections;
+
+// Captions sidecar: one JSON line per change, { t: ms since the clip's first
+// frame, objects }. Played back over the video by the recordings page.
+export const captionsFile = (file: string) => file.replace(/\.mp4$/, '.captions.jsonl');
+
+// Appends the camera's detections to the sidecar as they change. Never throws:
+// captions are a nice-to-have and must not affect the recording itself.
+export function recordCaptions(feed: DetectionFeed | undefined, camera: string, target: string, t0 = Date.now()): () => void {
+  if (!feed) return () => {};
+  const out = createWriteStream(target, { flags: 'a', mode: 0o600 });
+  out.on('error', () => {});
+  let last = '';
+  const write = (snapshot: Record<string, CaptionObject[]>) => {
+    const objects = (snapshot[camera] || []).map(({ id, label, caption, box }) => ({ id, label, caption, box }));
+    const key = JSON.stringify(objects);
+    if (key === last) return;
+    last = key;
+    out.write(JSON.stringify({ t: Math.max(0, Date.now() - t0), objects }) + '\n');
+  };
+  write(feed.current());
+  const unsubscribe = feed.subscribe(write);
+  return () => { unsubscribe(); out.end(); };
+}
 type Options = { directory: string; ffmpeg: string; ffprobe: string; rtsp: string; minFreeBytes: number; maxTotalBytes: number; requireMount: boolean; maxDurationSeconds: number; allowed: (id: string) => Promise<boolean> };
 
 export class Recorder {
@@ -37,11 +66,12 @@ export class Recorder {
     let names: string[];
     try { names = await readdir(this.options.directory); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error; }
+    const present = new Set(names);
     const files = await Promise.all(names.filter(file => FILE_RE.test(file)).map(async file => {
       try {
         const s = await lstat(path.join(this.options.directory, file));
         if (!s.isFile()) return null;
-        return { file, camera: file.replace(/_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}(?:_[a-f0-9-]+)?\.mp4$/, ''), size: s.size, createdAt: s.birthtimeMs || s.mtimeMs };
+        return { file, camera: file.replace(/_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}(?:_[a-f0-9-]+)?\.mp4$/, ''), size: s.size, createdAt: s.birthtimeMs || s.mtimeMs, captions: present.has(captionsFile(file)) };
       } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
     }));
     return files.filter((file): file is RecordingFile => Boolean(file)).sort((a, b) => b.createdAt - a.createdAt);
@@ -49,8 +79,14 @@ export class Recorder {
   async storage() {
     if (this.options.requireMount) await exec('mountpoint', ['-q', this.options.directory], { timeout: 3000 }).catch(() => { throw new Error('Recording drive is not mounted'); });
     await mkdir(this.options.directory, { recursive: true });
-    const [s, files] = await Promise.all([statfs(this.options.directory), this.files()]);
-    return { availableBytes: s.bavail * s.bsize, totalBytes: s.blocks * s.bsize, recordingBytes: files.reduce((sum, file) => sum + file.size, 0), limitBytes: this.options.maxTotalBytes };
+    const [s, files, copies] = await Promise.all([statfs(this.options.directory), this.files(), this.captionedBytes()]);
+    return { availableBytes: s.bavail * s.bsize, totalBytes: s.blocks * s.bsize, recordingBytes: files.reduce((sum, file) => sum + file.size, 0) + copies, limitBytes: this.options.maxTotalBytes };
+  }
+  // Copies with captions drawn in (lib/captioned.ts) count toward the limit.
+  private async captionedBytes() {
+    const names = await readdir(this.options.directory).catch(() => [] as string[]);
+    const sizes = await Promise.all(names.filter(n => /\.captioned\.mp4(\.part)?$/.test(n)).map(n => lstat(path.join(this.options.directory, n)).then(s => s.size, () => 0)));
+    return sizes.reduce((a, b) => a + b, 0);
   }
   private async checkStorage() {
     const s = await this.storage();
@@ -77,7 +113,7 @@ export class Recorder {
       const finish = () => {
         const naturalEnd = proc.exitCode === 0 && Date.now() - startedAt >= (this.options.maxDurationSeconds - 1) * 1000;
         if (session.ready && !session.stopping && !naturalEnd) this.errors[id] = 'Recorder stopped unexpectedly; check the camera and storage';
-        clearInterval(session.timer); resolveExit();
+        clearInterval(session.timer); session.stopCaptions?.(); resolveExit();
         if (this.sessions.get(id) === session) this.sessions.delete(id);
       };
       proc.once('exit', finish); proc.once('error', finish);
@@ -98,6 +134,8 @@ export class Recorder {
         });
         if (proc.exitCode !== null || proc.signalCode !== null) throw new Error('Recorder stopped during startup');
         proc.stdout?.resume(); session.ready = true; delete this.errors[id];
+        // The first frame just arrived, so "now" is the clip's time zero.
+        session.stopCaptions = recordCaptions(detectionFeed(), id, path.join(this.options.directory, captionsFile(file)));
         let checking = false;
         session.timer = setInterval(async () => {
           if (checking) return; checking = true;

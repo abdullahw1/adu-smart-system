@@ -7,4 +7,4 @@ export function login(name: string, password: string): Promise<string | null>;
 export function session(headers: Headers | Record<string,string>): User | null;
 export function logout(headers: Headers | Record<string,string>): void;
 export function sameOrigin(headers: Headers | Record<string, string | undefined>): boolean;
-export function cookie(token: string, clear?: boolean): string;
+export function cookie(token: string, clear?: boolean, headers?: Record<string, string | string[] | undefined> | Headers): string;

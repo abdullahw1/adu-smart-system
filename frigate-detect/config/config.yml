@@ -1,0 +1,86 @@
+# Frigate 0.18.2, detection only (see docker-compose.detect.yml).
+# {FRIGATE_*} placeholders are filled from the root .env by Compose; never put
+# real credentials here. Camera IDs must match the app (cam_XX).
+
+mqtt:
+  enabled: true
+  host: mqtt
+  port: 1883
+  topic_prefix: frigate
+
+# Intel N95 iGPU. OpenVINO runs the bundled SSDLite MobileNet v2 (COCO) model.
+detectors:
+  ov:
+    type: openvino
+    device: GPU
+
+model:
+  width: 300
+  height: 300
+  input_tensor: nhwc
+  input_pixel_format: bgr
+  path: /openvino-model/ssdlite_mobilenet_v2.xml
+  labelmap_path: /openvino-model/coco_91cl_bkgr.txt
+
+ffmpeg:
+  hwaccel_args: preset-vaapi
+
+# No HDD yet: keep video off disk. Detection events and the small database
+# still work.
+record:
+  enabled: false
+snapshots:
+  enabled: false
+
+detect:
+  enabled: true
+  width: 640
+  height: 360
+  fps: 5
+
+# The stock COCO model has no "package" class. Bags/suitcases are the closest
+# stand-ins until a model with a package class is used.
+objects:
+  track:
+    - person
+    - car
+    - bicycle
+    - motorcycle
+    - dog
+    - cat
+    - backpack
+    - handbag
+    - suitcase
+
+# Sub streams only (640x360). The app keeps using adu-go2rtc for live video.
+cameras:
+  cam_01:
+    ffmpeg:
+      inputs:
+        - path: 
+            rtsp://{FRIGATE_CAM_USER}:{FRIGATE_CAM_PASSWORD}@{FRIGATE_CAM01_HOST}:554/stream1
+          input_args: preset-rtsp-generic
+          roles: [detect]
+  cam_02:
+    ffmpeg:
+      inputs:
+        - path: 
+            rtsp://{FRIGATE_CAM_USER}:{FRIGATE_CAM_PASSWORD}@{FRIGATE_CAM02_HOST}:554/stream1
+          input_args: preset-rtsp-generic
+          roles: [detect]
+  cam_03:
+    enabled: false # camera disconnected; set true when it's back on the network
+    ffmpeg:
+      inputs:
+        - path: 
+            rtsp://{FRIGATE_CAM_USER}:{FRIGATE_CAM_PASSWORD}@{FRIGATE_CAM03_HOST}:554/stream1
+          input_args: preset-rtsp-generic
+          roles: [detect]
+  cam_04:
+    ffmpeg:
+      inputs:
+        - path: 
+            rtsp://{FRIGATE_CAM_USER}:{FRIGATE_CAM_PASSWORD}@{FRIGATE_CAM04_HOST}:554/stream1
+          input_args: preset-rtsp-generic
+          roles: [detect]
+version: 0.18-0

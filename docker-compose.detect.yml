@@ -1,0 +1,47 @@
+# Detection-only stack: Frigate object detection + MQTT events, no recording.
+# Runs alongside the native adu-go2rtc / adu-app user services on this box
+# while the surveillance HDD isn't installed. It needs no HDD and leaves the
+# live view alone: Frigate pulls each camera's sub stream directly, and its
+# internal go2rtc ports are not published, so nothing clashes with
+# adu-go2rtc on 1984/8554/8555.
+#
+#   docker compose -f docker-compose.detect.yml up -d
+#   Frigate UI (draw zones, watch detections): http://127.0.0.1:5000
+#
+# Once the HDD is in, the production docker-compose.yml supersedes this.
+services:
+  frigate:
+    container_name: frigate-detect
+    image: ghcr.io/blakeblackshear/frigate:0.18.2
+    restart: unless-stopped
+    stop_grace_period: 30s
+    shm_size: "256mb"
+    devices:
+      - /dev/dri/renderD128:/dev/dri/renderD128 # Intel iGPU: VAAPI decode + OpenVINO
+    environment:
+      # Frigate substitutes {FRIGATE_*} placeholders in config.yml, so the
+      # config file holds no credentials. Values come from the root .env.
+      FRIGATE_CAM_USER: ${CAM_USER:?set CAM_USER in .env}
+      FRIGATE_CAM_PASSWORD: ${CAM_PASSWORD:?set CAM_PASSWORD in .env}
+      FRIGATE_CAM01_HOST: ${CAM01_HOST}
+      FRIGATE_CAM02_HOST: ${CAM02_HOST}
+      FRIGATE_CAM03_HOST: ${CAM03_HOST}
+      FRIGATE_CAM04_HOST: ${CAM04_HOST}
+    volumes:
+      - ./frigate-detect/config:/config # config.yml (zones drawn in the UI are saved here) + database
+      - /etc/localtime:/etc/localtime:ro
+    tmpfs:
+      - /tmp/cache:size=200000000
+    ports:
+      - "127.0.0.1:5000:5000" # Frigate UI/API, localhost only (unauthenticated port)
+    depends_on:
+      - mqtt
+
+  mqtt:
+    container_name: frigate-mqtt
+    image: eclipse-mosquitto:2.0.20
+    restart: unless-stopped
+    volumes:
+      - ./frigate-detect/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    ports:
+      - "127.0.0.1:1883:1883" # the app subscribes to frigate/# from the host

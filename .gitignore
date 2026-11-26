@@ -7,6 +7,10 @@ frigate/config.yml
 frigate/media/
 frigate/exports/
 
+# Detection-only Frigate: keep config.yml, ignore its database/caches
+frigate-detect/config/*
+!frigate-detect/config/config.yml
+
 # Mosquitto runtime data
 mosquitto/data/
 
