@@ -1,3 +1,5 @@
+import { authorize } from '@/server/security.mjs';
+import { withCameraLock } from "@/lib/serial";
 import { cameraCredentials } from "@/lib/cameraConfig";
 import { readPrefs, updatePrefs, zoneOffsetMinutes } from "@/lib/cameraPrefs";
 import {
@@ -12,7 +14,8 @@ import {
 
 type Ctx = { params: Promise<{ id: string }> };
 
-export async function GET(_request: Request, { params }: Ctx) {
+export async function GET(request: Request, { params }: Ctx) {
+  const denied = await authorize(request, "admin"); if (denied) return denied;
   const { id } = await params;
   const cam = cameraCredentials(id);
   if (!cam) return notConfigured(id);
@@ -29,6 +32,7 @@ export async function GET(_request: Request, { params }: Ctx) {
 //   flip:  boolean
 // Returns the settings as read back afterwards, so the page shows what stuck.
 export async function PATCH(request: Request, { params }: Ctx) {
+  const denied = await authorize(request, "admin"); if (denied) return denied;
   const { id } = await params;
   const cam = cameraCredentials(id);
   if (!cam) return notConfigured(id);
@@ -46,7 +50,7 @@ export async function PATCH(request: Request, { params }: Ctx) {
     return Response.json({ error: "Invalid settings" }, { status: 400 });
   }
 
-  try {
+  try { return await withCameraLock(id, async () => {
     if (time) {
       await setTime(cam, time);
       await updatePrefs(id, { zone: time.zone });
@@ -57,7 +61,7 @@ export async function PATCH(request: Request, { params }: Ctx) {
       await updatePrefs(id, { flip: body.flip });
     }
     return Response.json(await describe(id, cam));
-  } catch (err) {
+  }); } catch (err) {
     return Response.json({ error: (err as Error).message }, { status: 502 });
   }
 }

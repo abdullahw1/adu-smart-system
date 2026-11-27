@@ -1,0 +1,8 @@
+[Unit]
+Description=Check ADU recording health
+After=adu.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/adu-health.env
+ExecStart=/usr/bin/python3 /opt/adu-smart-system/deploy/health-check.py

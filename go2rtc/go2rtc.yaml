@@ -7,7 +7,6 @@
 
 api:
   listen: ":1984"
-  origin: "*" # lets the app (different port) load the player and open streams
 
 rtsp:
   listen: ":8554"

@@ -106,13 +106,13 @@ export async function setTime(cam: Credentials, t: TimeUpdate): Promise<void> {
         `<tt:Date><tt:Year>${now.getUTCFullYear()}</tt:Year><tt:Month>${now.getUTCMonth() + 1}</tt:Month>` +
         `<tt:Day>${now.getUTCDate()}</tt:Day></tt:Date></tds:UTCDateTime>`
       : "";
-  await soap(
+  try { await soap(
     cam,
     "device_service",
     `<tds:SetSystemDateAndTime><tds:DateTimeType>${t.mode === "ntp" ? "NTP" : "Manual"}</tds:DateTimeType>` +
       `<tds:DaylightSavings>false</tds:DaylightSavings>` +
       `<tds:TimeZone><tt:TZ>${posixOffset(t.offsetMinutes)}</tt:TZ></tds:TimeZone>${utc}</tds:SetSystemDateAndTime>`,
-  );
+  ); } finally { clockOffset.delete(cam.host); }
 }
 
 export async function setImage(cam: Credentials, i: Partial<ImageSettings>): Promise<void> {

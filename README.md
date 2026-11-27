@@ -2,6 +2,27 @@
 
 A local-first security, networking, and smart-home platform for accessory dwelling units. Built for a family ADU first; designed to be repeatable for other homeowners and builders later.
 
+
+## Current setup and deployment
+
+See [deployment and security instructions](docs/deployment.md) for owner setup,
+viewer/admin permissions, SQLite migration, protected streaming, Ubuntu disk
+mount safeguards, Frigate recording, Tailscale HTTPS access and health alerts.
+The production Compose stack is for Ubuntu; the dev stack runs standalone
+go2rtc on the Mac. Start the app with `npm run dev` from `frontend`, then open
+http://localhost:3000/setup to create the owner account locally. No default
+password is shipped.
+
+The app includes manual recording, camera settings, a Frigate history timeline
+and time-range downloads when Frigate is configured. Continuous recording and
+remote access still require installation and acceptance testing on the Ubuntu
+server with its HDD. Older planning sections below describe the original
+phases; the deployment guide is authoritative for commands and configuration.
+
+The plan for growing this into a home automation platform (door, appliance
+and air-quality status, alerting, a TV dashboard and phone access) is in
+[home automation architecture](docs/home-automation-architecture.md).
+
 ## Table of contents
 
 - [Goals](#goals)
@@ -28,8 +49,8 @@ A local-first security, networking, and smart-home platform for accessory dwelli
 | Phase | What ships | Status |
 |---|---|---|
 | v1 — Hardware & recording | 5 cameras recording 24/7, VLANs, Frigate, remote viewing via tunnel, UPS, health alerts. No AI — continuous recording + Frigate motion detection only. | In progress — task breakdown: [`docs/v1-tasks.md`](docs/v1-tasks.md), target Sun Sept 27, 2026 |
-| v2 — Homeowner app | FastAPI backend + Next.js web app: accounts, live grid, timeline, clip export, TV-browser support. | Planned |
-| v3 — Expansion | Object detection (OpenVINO), sensor integrations (smoke/CO/gas/flood/door/stove) via the server API, off-site backup, installer image. | Planned |
+| v2 — Homeowner app | Node + Next.js web app (SQLite): accounts, live grid, timeline, clip export, TV-browser support. | Planned |
+| v3 — Expansion | Object detection (OpenVINO), sensor integrations (smoke/CO/gas/flood/door/stove, air quality, appliances) via Home Assistant, alerting, TV dashboard, off-site backup, installer image. See [`docs/home-automation-architecture.md`](docs/home-automation-architecture.md). | Planned |
 
 ## Hardware
 
@@ -37,7 +58,7 @@ A local-first security, networking, and smart-home platform for accessory dwelli
 |---|---|---|
 | Cameras | 5x Anpviz IPC-D3243W-S, 4MP PoE, ONVIF/RTSP | H.265 main stream, H.264 sub-stream |
 | Cabling | Cat6A F/UTP shielded, 9 runs (5 camera, 4 room) | Shielded end-to-end: jacks, plugs, patch panel |
-| PoE switch | TP-Link TL-SG1218MPE, 16-port PoE+, gigabit | 802.1Q VLAN tagging, 192W PoE budget |
+| PoE switch | TP-Link TL-SG1016PE, 16 gigabit ports, 8 PoE+ | 802.1Q VLAN tagging, 150W PoE budget |
 | Router | TP-Link Omada ER605 | VLANs, inter-VLAN firewall/ACLs |
 | Access point | TP-Link Omada EAP610 | WiFi 6, SSID-to-VLAN mapping |
 | Edge server | N100/N95-class mini PC, 16GB RAM, 512GB NVMe | Runs Frigate + backend; Quick Sync decode, OpenVINO-ready for v3 AI |
@@ -70,7 +91,8 @@ See [`docs/firewall-matrix.md`](docs/firewall-matrix.md) for the full source/des
 | NVR | Frigate (+ go2rtc) | MIT | RTSP ingest, recording, live view, events |
 | Messaging | Mosquitto (MQTT) | EPL/EDL | Frigate events now, sensors in v3 |
 | Proxy / auth | Caddy | Apache-2.0 | HTTPS + login in front of the UI |
-| Backend (v2) | FastAPI + PostgreSQL | MIT / PostgreSQL | Auth, camera config, clip metadata |
+| Backend (v2) | Node server + SQLite (`node:sqlite`) | MIT / Public domain | Auth, camera config, clip metadata, alerts (replaces the earlier FastAPI + PostgreSQL plan) |
+| Device hub (v3) | Home Assistant Core + Zigbee2MQTT | Apache-2.0 / GPL-3.0 (separate process) | Sensor and appliance integrations, safety automations |
 | Frontend (v2) | Next.js / React (PWA) | MIT | Phone, laptop, and TV-browser app |
 | Remote access | Tailscale | Free tier | Encrypted tunnel, no open ports |
 | Health | smartmontools, NUT, Uptime Kuma | GPL / MIT | Disk, UPS, and service alerts |
@@ -105,27 +127,36 @@ flowchart LR
 ```
 .
 ├── README.md                    # this file
-├── docker-compose.yml           # v1 stack: Frigate, Mosquitto, Caddy
-├── docker-compose.dev.yml       # dev-only standalone go2rtc (live view before Frigate is up)
-├── go2rtc/go2rtc.yaml           # dev go2rtc streams (creds come from .env)
+├── Makefile                     # make build|up|down|clean [STACK=dev|detect|prod]
+├── docker-compose.yml           # production (with HDD): Frigate recording, app, MQTT, patient-watch, face-watch
+├── docker-compose.dev.yml       # dev stack: go2rtc (demo clip or real cameras), MQTT, Frigate, patient-watch
+├── docker-compose.detect.yml    # edge box until the HDD is in: Frigate detection, MQTT, patient-watch
+├── go2rtc/go2rtc.yaml           # real camera streams (creds come from .env)
+├── go2rtc/go2rtc.demo.yaml      # demo streams: a recorded clip looped as cam_03
+├── demo/                        # demo clip builder + dev Frigate config (clip itself gitignored)
+├── patient-watch/               # gesture / patient-zone captions for cam_03 (+ record, replay, evaluate tools)
+├── face-watch/                  # face recognition on every camera; ids for unknown faces, named later (manage.py)
 ├── docs/
 │   ├── firewall-matrix.md       # full VLAN source/destination rules
+│   ├── home-automation-architecture.md  # single-pane-of-glass plan
 │   └── frigate-config.example.yml
 ├── frigate/
 │   └── config.yml               # actual Frigate config (gitignored: has credentials)
-├── backend/                     # v2 — FastAPI app
-└── frontend/                    # v2 — Next.js app (live camera grid)
+└── frontend/                    # v2 — Node server + Next.js app (live camera grid)
 ```
 
 ## Live view (dev)
 
-Runs the camera grid on a laptop on the same network as the cameras, before the edge server exists.
+Runs the camera grid, Frigate detections and patient-watch captions on a laptop, with no camera or edge server needed: by default go2rtc loops a recorded clip as `cam_03`.
 
 ```sh
-cp .env.example .env            # fill in CAM_USER / CAM_PASSWORD
-docker compose -f docker-compose.dev.yml up -d
-cd frontend && npm install && npm run dev
+make up                         # dev stack; builds demo/media/cam_03.mp4 from ~/patient-watch-recordings/rec1 the first time
+cd frontend && npm install && FACES_DIR=../runtime/faces-dev npm run dev
 ```
+
+The Makefile runs every stack: `make build|up|down|clean [STACK=dev|detect|prod] [SERVICES="..."]` (`make` alone lists the targets). `STACK=detect` is the detection stack running on the edge box today; `STACK=prod` starts and stops production through systemd so the HDD check still runs. `clean` also removes the stack's built images; no target deletes data (face library, recordings, configs, demo clip).
+
+For the real cameras instead (laptop on the camera network): `cp .env.example .env`, fill in `CAM_USER` / `CAM_PASSWORD`, then start the stack with `GO2RTC_CONFIG=go2rtc.yaml`. See [deployment](docs/deployment.md#mac-development) for details.
 
 Open http://localhost:3000 (or `http://<laptop-ip>:3000` from a phone). Click a tile for the full-quality stream; Esc closes it. To add a camera, add `cam_XX` (main, `/stream0`) and `cam_XX_sub` (sub, `/stream1`) to `go2rtc/go2rtc.yaml` with `#backchannel=0` — the grid picks it up automatically.
 
@@ -133,14 +164,14 @@ Open http://localhost:3000 (or `http://<laptop-ip>:3000` from a phone). Click a 
 
 **Camera settings:** in a camera's expanded view, **Settings** opens its date/time (per-camera or all at once), day/night, brightness/contrast/color/sharpness, WDR, backlight, and vertical flip, all over ONVIF using the `CAMxx_HOST`/`CAM_USER`/`CAM_PASSWORD` values from the repo-root `.env`. These Anpviz cameras only store a fixed UTC offset (they ignore DST rules), so after a daylight-saving change the page flags the clock as wrong. Press Apply to fix it.
 
-In production the app points at Frigate's bundled go2rtc instead (same port 1984); set `NEXT_PUBLIC_GO2RTC_URL` in `frontend/.env.local` if it isn't on the same host as the app.
+In production the server points at Frigate's bundled go2rtc; configure the server-only `GO2RTC_API_URL` and `GO2RTC_RTSP_URL` when needed. Browsers always use the authenticated app origin.
 
 ## Getting started
 
 1. Flash Debian to the edge server, disable onboard Wi-Fi in BIOS/OS (server should only be reachable over its wired VLAN interfaces).
 2. Install Docker + Docker Compose.
 3. Copy `docs/frigate-config.example.yml` to `frigate/config.yml`, fill in each camera's RTSP credentials and ONVIF details.
-4. `docker compose up -d` to bring up Frigate, Mosquitto, and Caddy.
+4. Follow `docs/deployment.md` to start Frigate and the app through the mount-checked systemd service.
 5. Confirm all 5 cameras are recording and live view works in Frigate's own UI before building anything on top.
 6. Configure the router (ER605) VLANs and firewall rules per the table above.
 7. Configure the AP (EAP610) SSID-to-VLAN mapping.

@@ -1,49 +1,36 @@
-# Example Frigate config for the ADU Smart System.
-# Copy to frigate/config.yml, fill in real credentials, do NOT commit that file.
-
+# Frigate 0.18.2. Copy into frigate/config.yml; never commit camera credentials.
+# Add every installed camera using this same pattern. IDs must match the app.
 mqtt:
-  host: mosquitto
-  port: 1883
-
-# Hardware-accelerated decode on the N100/N95 iGPU (Quick Sync)
+  enabled: false
 ffmpeg:
   hwaccel_args: preset-vaapi
-
-detectors:
-  # v1: no detector configured (recording + motion only).
-  # v3: enable OpenVINO here, same box, no added hardware.
-  cpu1:
-    type: cpu
-
+# Disable object inference in v1. Motion processing remains available.
+detect:
+  enabled: false
+record:
+  enabled: true
+  continuous:
+    days: 14
+# No management API or RTSP ports are exposed beyond localhost in Compose.
+go2rtc:
+  streams:
+    cam_01:
+      - rtsp://{FRIGATE_CAM_USER}:{FRIGATE_CAM_PASSWORD}@{FRIGATE_CAM01_HOST}:554/stream0#backchannel=0
+      - ffmpeg:cam_01#video=h264#hardware
+    cam_01_sub:
+      - rtsp://{FRIGATE_CAM_USER}:{FRIGATE_CAM_PASSWORD}@{FRIGATE_CAM01_HOST}:554/stream1#backchannel=0
+      - ffmpeg:cam_01_sub#video=h264#hardware
 cameras:
-  cam_01_roof:
+  cam_01:
     ffmpeg:
       inputs:
-        - path: rtsp://USER:PASSWORD@CAM01_IP:554/stream0 # main 2560x1440 H.265, record
+        - path: rtsp://127.0.0.1:8554/cam_01
+          input_args: preset-rtsp-restream
           roles: [record]
-        - path: rtsp://USER:PASSWORD@CAM01_IP:554/stream1 # sub 640x360, detect/live
+        - path: rtsp://127.0.0.1:8554/cam_01_sub
+          input_args: preset-rtsp-restream
           roles: [detect]
-    record:
-      enabled: true
-      retain:
-        days: 14
     detect:
       width: 640
       height: 360
       fps: 5
-
-  # cam_02_roof, cam_03_roof, cam_04_roof, cam_05_frontyard: same pattern
-
-# Stream names follow the app's convention (see go2rtc/go2rtc.yaml):
-# <camera> = main, <camera>_sub = sub. #backchannel=0 is required — the Anpviz
-# accepts the ONVIF two-way-audio request but then never sends video.
-# The ffmpeg: line is an on-demand H.265 -> H.264 transcode for browsers that
-# can't decode H.265 (Firefox, many TVs); see go2rtc/go2rtc.yaml.
-go2rtc:
-  streams:
-    cam_01_roof:
-      - rtsp://USER:PASSWORD@CAM01_IP:554/stream0#backchannel=0
-      - ffmpeg:cam_01_roof#video=h264#hardware
-    cam_01_roof_sub:
-      - rtsp://USER:PASSWORD@CAM01_IP:554/stream1#backchannel=0
-      - ffmpeg:cam_01_roof_sub#video=h264#hardware

@@ -1,0 +1,40 @@
+# Frigate for docker-compose.dev.yml: object detection on the go2rtc streams
+# (demo clip or real cameras, whichever go2rtc config is in use), no
+# recording, no GPU. Uses the CPU detector so it runs on any laptop; it's slow
+# but enough for one camera at 5 fps. Zones drawn in the UI
+# (http://127.0.0.1:5000) are saved here; name one patient_area for
+# patient-watch.
+mqtt:
+  enabled: true
+  host: mqtt
+  port: 1883
+  topic_prefix: frigate
+
+detectors:
+  cpu:
+    type: cpu
+    num_threads: 2
+
+record:
+  enabled: false
+snapshots:
+  enabled: false
+
+detect:
+  enabled: true
+  width: 640
+  height: 360
+  fps: 5
+
+objects:
+  track:
+    - person
+
+cameras:
+  cam_03:
+    ffmpeg:
+      inputs:
+        - path: rtsp://go2rtc:8554/cam_03_sub
+          input_args: preset-rtsp-generic
+          roles: [detect]
+version: 0.18-0
