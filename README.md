@@ -127,6 +127,7 @@ flowchart LR
 ```
 .
 ├── README.md                    # this file
+├── Makefile                     # make build|up|down|clean [STACK=dev|detect|prod]
 ├── docker-compose.yml           # production (with HDD): Frigate recording, app, MQTT, patient-watch, face-watch
 ├── docker-compose.dev.yml       # dev stack: go2rtc (demo clip or real cameras), MQTT, Frigate, patient-watch
 ├── docker-compose.detect.yml    # edge box until the HDD is in: Frigate detection, MQTT, patient-watch
@@ -149,10 +150,11 @@ flowchart LR
 Runs the camera grid, Frigate detections and patient-watch captions on a laptop, with no camera or edge server needed: by default go2rtc loops a recorded clip as `cam_03`.
 
 ```sh
-demo/make-demo-video.sh ~/patient-watch-recordings/rec1   # once: builds demo/media/cam_03.mp4
-docker compose -f docker-compose.dev.yml up -d
-cd frontend && npm install && npm run dev
+make up                         # dev stack; builds demo/media/cam_03.mp4 from ~/patient-watch-recordings/rec1 the first time
+cd frontend && npm install && FACES_DIR=../runtime/faces-dev npm run dev
 ```
+
+The Makefile runs every stack: `make build|up|down|clean [STACK=dev|detect|prod] [SERVICES="..."]` (`make` alone lists the targets). `STACK=detect` is the detection stack running on the edge box today; `STACK=prod` starts and stops production through systemd so the HDD check still runs. `clean` also removes the stack's built images; no target deletes data (face library, recordings, configs, demo clip).
 
 For the real cameras instead (laptop on the camera network): `cp .env.example .env`, fill in `CAM_USER` / `CAM_PASSWORD`, then start the stack with `GO2RTC_CONFIG=go2rtc.yaml`. See [deployment](docs/deployment.md#mac-development) for details.
 
