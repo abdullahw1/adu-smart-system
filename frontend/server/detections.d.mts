@@ -18,4 +18,9 @@ export class PatientWatch {
   tick(now?: number): boolean;
   merge(snapshot: Record<string, LiveObject[]>, now?: number): Record<string, LiveObject[]>;
 }
-export function startDetections(options: { mqttUrl: string; apiUrl: string; onChange: (snapshot: Record<string, LiveObject[]>) => void }): { tracker: DetectionTracker; watch: PatientWatch; stop: () => void };
+export class FaceWatch {
+  apply(topic: string, text: string, now?: number): boolean;
+  tick(now?: number): boolean;
+  merge(snapshot: Record<string, LiveObject[]>): Record<string, LiveObject[]>;
+}
+export function startDetections(options: { mqttUrl: string; apiUrl: string; onChange: (snapshot: Record<string, LiveObject[]>) => void }): { tracker: DetectionTracker; watch: PatientWatch; faces: FaceWatch; stop: () => void };

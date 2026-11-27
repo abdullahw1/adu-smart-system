@@ -75,3 +75,22 @@ test('patient watch shows an alert when it goes quiet or loses video', async () 
   assert.equal(watch.merge({}, 6000).cam_03[0].caption, 'Patient monitor: no video');
   assert.deepEqual(watch.merge({ cam_01: [] }, 6000).cam_01, []); // other cameras untouched
 });
+
+test('face-watch labels are added to the camera and vanish when the service goes quiet', async () => {
+  const { FaceWatch } = await import('../server/detections.mjs');
+  const faces = new FaceWatch();
+  const frigate = { cam_01: [{ id: 'p1', label: 'person', caption: 'Person standing', score: 0.8, box: [0.1, 0.1, 0.3, 0.8] }] };
+  const message = JSON.stringify({ camera: 'cam_01', t: 1, objects: [
+    { id: 'face-3', label: 'face', caption: 'Alice', identity: 'face_0001', box: [0.2, 0.15, 0.05, 0.1] },
+    { id: 'x', label: 'person', caption: 'not a face', box: [0, 0, 1, 1] },
+  ] });
+  assert.equal(faces.apply('adu/faces/cam_01', message, 1000), true);
+  assert.equal(faces.apply('adu/faces/cam_01', message, 1200), false); // unchanged: no re-render
+  assert.equal(faces.apply('adu/faces/status', 'online', 1200), false);
+  const merged = faces.merge(frigate);
+  assert.deepEqual(merged.cam_01.map(o => o.caption), ['Person standing', 'Alice']); // Frigate's person box stays
+  assert.equal(merged.cam_01[1].id, 'cam_01-face-3');
+  assert.equal(faces.tick(3500), false);
+  assert.equal(faces.tick(4500), true);
+  assert.deepEqual(faces.merge(frigate), frigate);
+});

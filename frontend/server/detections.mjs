@@ -166,21 +166,64 @@ export class PatientWatch {
   }
 }
 
+// Face labels from the face-watch service (../face-watch): adu/faces/<camera>
+// carries the faces seen on that camera, captioned with a name or an id such
+// as face_0003 ("Face" while not yet identified). Faces are extra boxes, not an
+// alarm: if the service stops or goes quiet they simply disappear.
+const FACE_STALE_MS = 3000;
+
+export class FaceWatch {
+  constructor() { this.cameras = new Map(); }
+
+  apply(topic, text, now = Date.now()) {
+    const match = /^adu\/faces\/([\w-]+)$/.exec(topic);
+    if (!match || match[1] === 'status') return false;
+    let data;
+    try { data = JSON.parse(text); } catch { return false; }
+    const objects = (Array.isArray(data?.objects) ? data.objects : [])
+      .filter(o => o && o.label === 'face' && typeof o.caption === 'string' && Array.isArray(o.box) && o.box.length === 4)
+      .map(o => ({ id: `${match[1]}-${String(o.id)}`, label: 'face', caption: o.caption.slice(0, 40), score: 1,
+        box: o.box.map(v => Math.min(1, Math.max(0, Number(v) || 0))) }));
+    const before = this.cameras.get(match[1]);
+    this.cameras.set(match[1], { objects, seen: now });
+    return JSON.stringify(before?.objects || []) !== JSON.stringify(objects);
+  }
+
+  // True when a camera's faces went stale since the last tick (they get dropped).
+  tick(now = Date.now()) {
+    let changed = false;
+    for (const [camera, state] of this.cameras) {
+      if (now - state.seen > FACE_STALE_MS) { this.cameras.delete(camera); changed = changed || state.objects.length > 0; }
+    }
+    return changed;
+  }
+
+  merge(snapshot) {
+    const out = { ...snapshot };
+    for (const [camera, state] of this.cameras) if (state.objects.length) out[camera] = [...(out[camera] || []), ...state.objects];
+    return out;
+  }
+}
+
 // Connects to Frigate's MQTT broker and calls onChange(snapshot) when the set
 // of objects changes. Reconnects quietly if Frigate isn't running yet.
 export function startDetections({ mqttUrl, apiUrl, onChange }) {
   const tracker = new DetectionTracker();
   const watch = new PatientWatch();
-  const emit = () => onChange(watch.merge(tracker.snapshot()));
+  const faces = new FaceWatch();
+  const emit = () => onChange(faces.merge(watch.merge(tracker.snapshot())));
   loadFrames(apiUrl).then(frames => { tracker.frames = frames; });
   const client = mqtt.connect(mqttUrl, { reconnectPeriod: 10_000, connectTimeout: 5000, clientId: 'adu-app-' + process.pid });
-  client.on('connect', () => client.subscribe(['frigate/events', 'adu/watch/#']));
+  client.on('connect', () => client.subscribe(['frigate/events', 'adu/watch/#', 'adu/faces/#']));
   client.on('error', () => {}); // offline Frigate is normal; mqtt keeps retrying
   client.on('message', (topic, payload) => {
     try {
-      if (topic === 'frigate/events' ? tracker.apply(JSON.parse(payload.toString())) : watch.apply(topic, payload.toString())) emit();
+      const text = payload.toString();
+      const changed = topic === 'frigate/events' ? tracker.apply(JSON.parse(text))
+        : topic.startsWith('adu/faces/') ? faces.apply(topic, text) : watch.apply(topic, text);
+      if (changed) emit();
     } catch { /* ignore malformed */ }
   });
-  const timer = setInterval(() => { if (tracker.prune() | watch.tick()) emit(); }, 1000);
-  return { tracker, watch, stop: () => { clearInterval(timer); client.end(true); } };
+  const timer = setInterval(() => { if (tracker.prune() | watch.tick() | faces.tick()) emit(); }, 1000);
+  return { tracker, watch, faces, stop: () => { clearInterval(timer); client.end(true); } };
 }

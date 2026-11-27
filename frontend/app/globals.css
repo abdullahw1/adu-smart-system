@@ -356,6 +356,47 @@ button:disabled { opacity: 0.5; cursor: default; }
 @keyframes detection-pulse { 50% { box-shadow: inset 0 0 0 4px rgb(255 69 58 / 0.5); } }
 @media (prefers-reduced-motion: reduce) { .detection-alert { animation: none; } }
 .detection-compact .detection-caption { font-size: 0.68rem; padding: 1px 4px; }
+/* Face recognition (face-watch): a name or face_0003; "Face" while unidentified. */
+.detection-face { --c: #64d2ff; border-width: 2px; border-radius: 6px; transition-duration: 0.2s; }
 
 /* Recording playback with saved detection captions (RecordingPlayer) */
 .captions-toggle { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 0.85rem; color: var(--muted); }
+
+/* Faces tab (FaceLibrary): the face-watch library */
+.faces { display: grid; gap: 16px; }
+.faces-summary { margin: 0; color: var(--muted); display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.muted { color: var(--muted); font-size: 0.85rem; }
+button.link { background: none; border: none; padding: 0; color: var(--detect-face, #64d2ff); text-align: left; font-size: 0.85rem; }
+button.danger { border-color: color-mix(in srgb, var(--bad) 60%, var(--border)); color: var(--bad); }
+.danger-link { margin-left: auto; background: none; border: none; color: var(--bad); font-size: 0.85rem; padding: 0; }
+.faces-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.faces-toolbar input[type="search"] { font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; min-width: 0; flex: 0 1 240px; }
+.faces-toolbar button, .face-dupe-actions button { padding: 6px 12px; font-size: 0.85rem; }
+.faces-selection { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-left: auto; }
+.face-grid { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); }
+.face-card { display: grid; grid-template-columns: 112px 1fr; gap: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px; }
+.face-card.selected { border-color: #64d2ff; }
+.face-cover { position: relative; width: 112px; height: 112px; }
+.face-cover img, .face-blank { width: 112px; height: 112px; border-radius: 8px; object-fit: cover; display: block; background: var(--bg); }
+.face-select { position: absolute; top: 6px; left: 6px; width: 20px; height: 20px; accent-color: #64d2ff; }
+.face-info { display: grid; align-content: start; gap: 4px; min-width: 0; }
+.face-name { font: inherit; font-weight: 600; color: var(--text); background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 4px 6px; margin-left: -7px; width: 100%; }
+.face-name:hover, .face-name:focus { border-color: var(--border); background: var(--bg); }
+.face-name::placeholder { color: var(--muted); font-weight: 400; }
+.face-photos { grid-column: 1 / -1; display: grid; gap: 8px; }
+.face-photo-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.face-photo { position: relative; display: block; border-radius: 6px; border: 2px solid transparent; }
+.face-photo.selected { border-color: var(--bad); }
+.face-photo img { display: block; width: 72px; height: 72px; border-radius: 4px; }
+.face-photo input { position: absolute; top: 3px; left: 3px; accent-color: var(--bad); }
+.face-dupes { background: var(--surface); border: 1px solid color-mix(in srgb, var(--warn) 50%, var(--border)); border-radius: var(--radius); padding: 12px 14px; }
+.face-dupes h2 { margin: 0 0 4px; font-size: 1rem; }
+.face-dupes .hint { margin: 0 0 10px; }
+.face-dupes ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.face-dupe { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
+.face-dupe-score { color: var(--warn); font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+.face-dupe-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
+.face-chip { display: flex; align-items: center; gap: 8px; }
+.face-chip img, .face-chip .face-blank { width: 56px; height: 56px; border-radius: 6px; }
+.face-chip > span:last-child { display: grid; }
+.face-chip small { color: var(--muted); font-size: 0.75rem; }
