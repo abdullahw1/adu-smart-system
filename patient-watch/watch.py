@@ -2,7 +2,10 @@
 
 Reads the camera's sub stream from the local go2rtc, runs MediaPipe Pose and
 Gesture Recognizer on each frame (CPU), applies the rules in logic.py and
-publishes the result over MQTT for the app's live view:
+publishes the result over MQTT for the app's live view. A person detector
+(EfficientDet-Lite2, about 2x a second on a background thread) confirms that
+a pose body really is a person; on its own the pose model "finds" people in
+empty chairs and on desk clutter:
 
   adu/watch/<camera>         {"camera", "t", "objects": [...]}   up to 5x a second
   adu/watch/<camera>/status  online | no_video | offline          (retained; offline is the MQTT will)
@@ -27,7 +30,7 @@ import paho.mqtt.client as mqtt  # noqa: E402
 from mediapipe.tasks import python as mp_tasks  # noqa: E402
 from mediapipe.tasks.python import vision  # noqa: E402
 
-from logic import Body, Hand, Settings, Watcher, parse_zone  # noqa: E402
+from logic import Settings, Watcher, observe_body, observe_hands, parse_zone  # noqa: E402
 
 CAMERA = os.environ.get('CAMERA', 'cam_03')
 SOURCE = os.environ.get('SOURCE', f'rtsp://127.0.0.1:8554/{CAMERA}_sub')
@@ -36,8 +39,11 @@ MQTT_PORT = int(os.environ.get('MQTT_PORT', '1883'))
 FRIGATE_API = os.environ.get('FRIGATE_API', 'http://127.0.0.1:5000').rstrip('/')
 ZONE_NAME = os.environ.get('PATIENT_ZONE', 'patient_area')
 FPS = float(os.environ.get('FPS', '10'))
-SENSITIVITY = os.environ.get('SENSITIVITY', 'high')
+SENSITIVITY = os.environ.get('SENSITIVITY', 'normal')
 MODELS = os.environ.get('MODELS', '/models')
+PERSON_SCORE = float(os.environ.get('PERSON_SCORE', '0.4'))
+PERSON_EVERY = float(os.environ.get('PERSON_EVERY', '0.5'))  # seconds between person-detector runs
+PERSON_MEMORY = 1.5  # a person box stays valid this long, so one missed run doesn't drop the patient
 TOPIC = f'adu/watch/{CAMERA}'
 
 log = logging.getLogger('patient-watch')
@@ -75,6 +81,49 @@ class LatestFrame(threading.Thread):
             return self.frame, self.stamp
 
 
+class PersonDetector(threading.Thread):
+    """Runs the person detector on the newest frame every PERSON_EVERY seconds.
+    people() returns the person boxes seen in the last PERSON_MEMORY seconds;
+    an empty list (no person confirmed) if the detector has stalled."""
+
+    def __init__(self, reader):
+        super().__init__(daemon=True)
+        self.reader = reader
+        self.lock = threading.Lock()
+        self.seen = []  # (frame stamp, [boxes])
+        self.detector = vision.ObjectDetector.create_from_options(vision.ObjectDetectorOptions(
+            base_options=mp_tasks.BaseOptions(model_asset_path=os.path.join(MODELS, 'efficientdet_lite2.tflite')),
+            running_mode=vision.RunningMode.IMAGE, score_threshold=PERSON_SCORE, category_allowlist=['person'], max_results=4))
+
+    def run(self):
+        last = 0.0
+        while True:
+            start = time.time()
+            frame, stamp = self.reader.latest()
+            if frame is not None and stamp != last:
+                last = stamp
+                try:
+                    boxes = person_boxes(self.detector, frame)
+                except Exception:  # keep running; people() goes empty and the UI shows the patient as gone
+                    log.exception('person detector failed')
+                    boxes = []
+                with self.lock:
+                    self.seen = [s for s in self.seen if stamp - s[0] <= PERSON_MEMORY] + [(stamp, boxes)]
+            time.sleep(max(0.05, PERSON_EVERY - (time.time() - start)))
+
+    def people(self, now):
+        with self.lock:
+            return [b for stamp, boxes in self.seen if now - stamp <= PERSON_MEMORY for b in boxes]
+
+
+def person_boxes(detector, frame):
+    h, w = frame.shape[:2]
+    result = detector.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)))
+    return [(d.bounding_box.origin_x / w, d.bounding_box.origin_y / h,
+             (d.bounding_box.origin_x + d.bounding_box.width) / w, (d.bounding_box.origin_y + d.bounding_box.height) / h)
+            for d in result.detections]
+
+
 def fetch_zone():
     """Returns (polygon, name) for the patient zone from Frigate, or ([], '')."""
     try:
@@ -91,8 +140,9 @@ def fetch_zone():
     return parse_zone(zones[name].get('coordinates', ''), detect.get('width') or 640, detect.get('height') or 360), name
 
 
-def models(settings_level):
-    confidence = 0.3 if settings_level == 'high' else 0.5
+def models():
+    # 0.5: lower values let the pose model invent people in empty chairs more often.
+    confidence = 0.5
     base = lambda name: mp_tasks.BaseOptions(model_asset_path=os.path.join(MODELS, name))  # noqa: E731
     pose = vision.PoseLandmarker.create_from_options(vision.PoseLandmarkerOptions(
         base_options=base('pose_landmarker_lite.task'), running_mode=vision.RunningMode.VIDEO, num_poses=2,
@@ -103,29 +153,21 @@ def models(settings_level):
     return pose, gestures
 
 
-def largest_body(result):
-    """The patient is taken to be the biggest person in view."""
-    best, best_area = None, 0.0
-    for landmarks in result.pose_landmarks or []:
-        xs, ys = [p.x for p in landmarks], [p.y for p in landmarks]
-        area = (max(xs) - min(xs)) * (max(ys) - min(ys))
-        if area > best_area:
-            best, best_area = landmarks, area
-    if best is None:
-        return None
-    return Body({i: (p.x, p.y, p.visibility) for i, p in enumerate(best)})
+def raw_bodies(result):
+    """Pose output in the same shape record.py saves, for logic.observe_body."""
+    return [{'lm': [[p.x, p.y, p.visibility, p.presence] for p in landmarks], 'seg': None}
+            for landmarks in result.pose_landmarks or []]
 
 
-def hands_from(result):
+def raw_hands(result):
+    """Gesture output in the same shape record.py saves, for logic.observe_hands."""
     hands = []
     for i, landmarks in enumerate(result.hand_landmarks or []):
         xs, ys = [p.x for p in landmarks], [p.y for p in landmarks]
-        sign = None
-        if result.gestures and i < len(result.gestures) and result.gestures[i]:
-            top = result.gestures[i][0]
-            if top.category_name != 'None' and top.score >= 0.5:
-                sign = top.category_name
-        hands.append(Hand((min(xs), min(ys), max(xs), max(ys)), sign))
+        top = result.gestures[i][0] if result.gestures and i < len(result.gestures) and result.gestures[i] else None
+        hand = result.handedness[i][0] if result.handedness and i < len(result.handedness) and result.handedness[i] else None
+        hands.append({'box': [min(xs), min(ys), max(xs), max(ys)], 'sign': top.category_name if top else None,
+                      'sign_score': top.score if top else 0.0, 'hand_score': hand.score if hand else 0.0})
     return hands
 
 
@@ -133,7 +175,7 @@ def main():
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
     settings = Settings.for_sensitivity(SENSITIVITY)
     watcher = Watcher(settings)
-    pose, gestures = models(SENSITIVITY)
+    pose, gestures = models()
 
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f'patient-watch-{CAMERA}')
     client.will_set(TOPIC + '/status', 'offline', retain=True)
@@ -151,6 +193,8 @@ def main():
 
     reader = LatestFrame(SOURCE)
     reader.start()
+    people = PersonDetector(reader)
+    people.start()
 
     interval = 1.0 / FPS
     last_zone_fetch = last_publish = last_stats = 0.0
@@ -178,9 +222,9 @@ def main():
 
         image = mp.Image(image_format=mp.ImageFormat.SRGB, data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         ms = int(stamp * 1000)
-        body = largest_body(pose.detect_for_video(image, ms))
-        hands = hands_from(gestures.recognize_for_video(image, ms))
-        objects = watcher.update(stamp, body, hands)
+        body = observe_body(raw_bodies(pose.detect_for_video(image, ms)), settings)
+        hands = observe_hands(raw_hands(gestures.recognize_for_video(image, ms)), settings)
+        objects = watcher.update(stamp, body, hands, people.people(stamp))
         frames += 1
 
         # Log caption changes: a simple record of what was shown and when.

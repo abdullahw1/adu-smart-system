@@ -7,7 +7,8 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 # Google's published MediaPipe models (pose: lite variant, fast on CPU).
 RUN mkdir /models \
  && curl -fsSL -o /models/pose_landmarker_lite.task https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task \
- && curl -fsSL -o /models/gesture_recognizer.task https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/latest/gesture_recognizer.task
+ && curl -fsSL -o /models/gesture_recognizer.task https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/latest/gesture_recognizer.task \
+ && curl -fsSL -o /models/efficientdet_lite2.tflite https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite2/float32/latest/efficientdet_lite2.tflite
 WORKDIR /app
 COPY logic.py watch.py test_logic.py /app/
 RUN python -m unittest -q test_logic
