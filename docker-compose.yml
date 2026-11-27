@@ -46,6 +46,8 @@ services:
       GO2RTC_API_URL: http://127.0.0.1:1984
       GO2RTC_RTSP_URL: rtsp://127.0.0.1:8554
       FRIGATE_API_URL: http://127.0.0.1:5000
+      FRIGATE_MQTT_URL: mqtt://127.0.0.1:1883 # patient-watch and face-watch captions
+      FACES_DIR: /faces # face-watch's library, for the Faces tab
     volumes:
       - type: bind
         source: ./runtime/app
@@ -57,6 +59,62 @@ services:
         target: /recordings
         bind:
           create_host_path: false
+      - type: bind
+        source: ./runtime/faces
+        target: /faces
+        bind:
+          create_host_path: false
     depends_on:
       frigate:
         condition: service_healthy
+      mqtt:
+        condition: service_started
+
+  # Event bus: patient-watch and face-watch publish captions, the app subscribes.
+  mqtt:
+    container_name: frigate-mqtt
+    image: eclipse-mosquitto:2.0.20
+    restart: "no" # systemd owns restarts after checking the HDD mount
+    volumes:
+      - ./frigate-detect/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    ports:
+      - "127.0.0.1:1883:1883"
+
+  # Prototype: hand gestures and "patient left the zone" captions for one
+  # camera (see patient-watch/). Captions only, no notifications.
+  patient-watch:
+    container_name: patient-watch
+    build: ./patient-watch
+    restart: "no"
+    network_mode: host # go2rtc RTSP (Frigate's, 127.0.0.1:8554), MQTT (1883), Frigate API (5000)
+    environment:
+      CAMERA: cam_03
+      PATIENT_ZONE: patient_area
+      SENSITIVITY: normal # high (quicker alerts) | normal | low
+      FPS: "10"
+    depends_on:
+      - mqtt
+      - frigate
+
+  # Prototype: face recognition on every camera (see face-watch/ and the
+  # Faces tab). The library is biometric data: it stays in runtime/faces,
+  # and unnamed ids not seen for RETAIN_DAYS are deleted.
+  face-watch:
+    container_name: face-watch
+    build: ./face-watch
+    restart: "no"
+    user: "1000:1000" # owns runtime/faces, like runtime/app
+    network_mode: host # go2rtc RTSP (Frigate's, 127.0.0.1:8554) and MQTT (1883)
+    environment:
+      CAMERAS: cam_01,cam_02,cam_03,cam_04
+      FACE_FPS: "2" # per camera; the N95 is ~90% busy at 3 with patient-watch running
+      RETAIN_DAYS: "30"
+    volumes:
+      - type: bind
+        source: ./runtime/faces
+        target: /data
+        bind:
+          create_host_path: false
+    depends_on:
+      - mqtt
+      - frigate

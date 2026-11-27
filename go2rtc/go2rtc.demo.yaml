@@ -1,0 +1,19 @@
+# Demo cameras for docker-compose.dev.yml when no real camera is reachable:
+# a recorded clip (demo/media/, built by demo/make-demo-video.sh) is looped
+# forever and served under the same names the real cameras use, so the app,
+# Frigate and patient-watch can't tell the difference.
+#
+# The clip is already H.264 640x360 (the real sub-stream size), so it is
+# copied, not transcoded. The main stream reuses the same clip.
+
+api:
+  listen: ":1984"
+
+rtsp:
+  listen: ":8554"
+
+streams:
+  cam_03_sub:
+    - exec:ffmpeg -hide_banner -loglevel error -re -stream_loop -1 -i /media/cam_03.mp4 -c copy -rtsp_transport tcp -f rtsp {output}
+  cam_03:
+    - exec:ffmpeg -hide_banner -loglevel error -re -stream_loop -1 -i /media/cam_03.mp4 -c copy -rtsp_transport tcp -f rtsp {output}

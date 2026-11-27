@@ -34,3 +34,23 @@ frontend/data/
 runtime/
 frontend/.build/
 frontend/.test-next/
+
+# Dev stack: demo footage shows real people; Frigate dev runtime data
+demo/media/
+demo/frigate/*
+!demo/frigate/config.yml
+.next-dev/
+
+# Face recognition data (biometric): the face library, its ids, photos and
+# sheets stay on this machine only. runtime/ above already covers the default
+# locations; these rules keep them ignored even if that rule changes or a
+# library is pointed somewhere else (FACES_DIR / DATA).
+runtime/faces/
+runtime/faces-*/
+faces.sqlite
+faces.sqlite-*
+**/thumbs/face_*/
+**/known/*/
+# App data for a second dev copy of the app (APP_DATA_DIR=data-dev): sessions
+# and face decisions
+frontend/data-dev/

@@ -127,9 +127,14 @@ flowchart LR
 ```
 .
 ├── README.md                    # this file
-├── docker-compose.yml           # v1 stack: Frigate, Mosquitto, Caddy
-├── docker-compose.dev.yml       # dev-only standalone go2rtc (live view before Frigate is up)
-├── go2rtc/go2rtc.yaml           # dev go2rtc streams (creds come from .env)
+├── docker-compose.yml           # production (with HDD): Frigate recording, app, MQTT, patient-watch, face-watch
+├── docker-compose.dev.yml       # dev stack: go2rtc (demo clip or real cameras), MQTT, Frigate, patient-watch
+├── docker-compose.detect.yml    # edge box until the HDD is in: Frigate detection, MQTT, patient-watch
+├── go2rtc/go2rtc.yaml           # real camera streams (creds come from .env)
+├── go2rtc/go2rtc.demo.yaml      # demo streams: a recorded clip looped as cam_03
+├── demo/                        # demo clip builder + dev Frigate config (clip itself gitignored)
+├── patient-watch/               # gesture / patient-zone captions for cam_03 (+ record, replay, evaluate tools)
+├── face-watch/                  # face recognition on every camera; ids for unknown faces, named later (manage.py)
 ├── docs/
 │   ├── firewall-matrix.md       # full VLAN source/destination rules
 │   ├── home-automation-architecture.md  # single-pane-of-glass plan
@@ -141,13 +146,15 @@ flowchart LR
 
 ## Live view (dev)
 
-Runs the camera grid on a laptop on the same network as the cameras, before the edge server exists.
+Runs the camera grid, Frigate detections and patient-watch captions on a laptop, with no camera or edge server needed: by default go2rtc loops a recorded clip as `cam_03`.
 
 ```sh
-cp .env.example .env            # fill in CAM_USER / CAM_PASSWORD
+demo/make-demo-video.sh ~/patient-watch-recordings/rec1   # once: builds demo/media/cam_03.mp4
 docker compose -f docker-compose.dev.yml up -d
 cd frontend && npm install && npm run dev
 ```
+
+For the real cameras instead (laptop on the camera network): `cp .env.example .env`, fill in `CAM_USER` / `CAM_PASSWORD`, then start the stack with `GO2RTC_CONFIG=go2rtc.yaml`. See [deployment](docs/deployment.md#mac-development) for details.
 
 Open http://localhost:3000 (or `http://<laptop-ip>:3000` from a phone). Click a tile for the full-quality stream; Esc closes it. To add a camera, add `cam_XX` (main, `/stream0`) and `cam_XX_sub` (sub, `/stream1`) to `go2rtc/go2rtc.yaml` with `#backchannel=0` — the grid picks it up automatically.
 

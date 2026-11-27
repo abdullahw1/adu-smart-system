@@ -58,7 +58,27 @@ services:
     environment:
       CAMERA: cam_03
       PATIENT_ZONE: patient_area
-      SENSITIVITY: high # high | normal | low
+      SENSITIVITY: normal # high (quicker alerts) | normal | low
       FPS: "10"
+    depends_on:
+      - mqtt
+
+  # Prototype: recognises faces on every camera against a local face library.
+  # Unknown faces get an id (face_0001, ...) after a few clear views; name
+  # them later with manage.py (see face-watch/manage.py). The library is
+  # biometric data: it stays in runtime/faces (gitignored), and unnamed ids not seen
+  # for RETAIN_DAYS are deleted.
+  face-watch:
+    container_name: face-watch
+    build: ./face-watch
+    restart: unless-stopped
+    user: "${UID:-1000}:${GID:-1000}" # owns the face library folder on the host
+    network_mode: host # reaches go2rtc RTSP (127.0.0.1:8554) and MQTT (1883)
+    environment:
+      CAMERAS: cam_01,cam_02,cam_03,cam_04
+      FACE_FPS: "2" # per camera; the N95 is ~90% busy at 3 with patient-watch running
+      RETAIN_DAYS: "30"
+    volumes:
+      - ./runtime/faces:/data
     depends_on:
       - mqtt

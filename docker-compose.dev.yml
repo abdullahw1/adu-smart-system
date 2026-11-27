@@ -1,16 +1,108 @@
-# Dev-only: go2rtc on its own so the live view works on a laptop before the
-# edge server / Frigate exist. Not used in production (Frigate provides go2rtc).
+# Dev stack: everything the live view and its captions need, without the
+# production server or (by default) any real camera.
 #
+#   demo/make-demo-video.sh ~/patient-watch-recordings/rec1   # once: builds demo/media/cam_03.mp4
 #   docker compose -f docker-compose.dev.yml up -d
+#   cd frontend && FACES_DIR=../runtime/faces-dev npm run dev # http://localhost:3000 (Faces tab: dev library)
 #
+# Services (all bound to 127.0.0.1):
+#   go2rtc         camera streams. Default: go2rtc/go2rtc.demo.yaml, which loops
+#                  the recorded clip as cam_03 / cam_03_sub. For the real cameras
+#                  (laptop on the camera network, creds in .env):
+#                    GO2RTC_CONFIG=go2rtc.yaml docker compose -f docker-compose.dev.yml up -d
+#   mqtt           event bus between Frigate / patient-watch and the app
+#   frigate        person detection on cam_03 (CPU detector, no recording)
+#   patient-watch  gesture and patient-zone captions for cam_03
+#   face-watch     face recognition (library in runtime/faces-dev, separate from
+#                  the live one). With real cameras, set DEV_FACE_CAMERAS=cam_01,cam_02,cam_03,cam_04
+#
+# The ports match the production defaults, so `npm run dev` needs no settings.
+# To run this next to the live system on the edge box, move the ports and
+# point the app at them:
+#   DEV_GO2RTC_PORT=11984 DEV_RTSP_PORT=18554 DEV_MQTT_PORT=11883 DEV_FRIGATE_PORT=15000 \
+#     docker compose -f docker-compose.dev.yml up -d
+#   GO2RTC_API_URL=http://127.0.0.1:11984 GO2RTC_RTSP_URL=rtsp://127.0.0.1:18554 \
+#     FRIGATE_MQTT_URL=mqtt://127.0.0.1:11883 FRIGATE_DETECT_API_URL=http://127.0.0.1:15000 \
+#     FACES_DIR=../runtime/faces-dev PORT=3100 NEXT_DIST_DIR=.next-dev APP_DATA_DIR=data-dev npm run dev
+#
+# Own project name: without it Compose would treat mqtt/frigate/patient-watch
+# as the live detection stack's services (same folder) and replace them.
+name: adu-dev
+
 services:
   go2rtc:
     container_name: go2rtc-dev
     image: alexxit/go2rtc:1.9.14
     restart: unless-stopped
-    env_file: .env
+    env_file:
+      - path: .env # camera credentials, only needed with GO2RTC_CONFIG=go2rtc.yaml
+        required: false
     volumes:
-      - ./go2rtc/go2rtc.yaml:/config/go2rtc.yaml:ro
+      - ./go2rtc/${GO2RTC_CONFIG:-go2rtc.demo.yaml}:/config/go2rtc.yaml:ro
+      - ./demo/media:/media:ro
     ports:
-      - "127.0.0.1:1984:1984"      # API + browser streams (MSE/WebSocket)
-      - "127.0.0.1:8554:8554"      # RTSP restream
+      - "127.0.0.1:${DEV_GO2RTC_PORT:-1984}:1984" # API + browser streams (MSE/WebSocket)
+      - "127.0.0.1:${DEV_RTSP_PORT:-8554}:8554"   # RTSP restream (manual recordings)
+
+  mqtt:
+    container_name: mqtt-dev
+    image: eclipse-mosquitto:2.0.20
+    restart: unless-stopped
+    volumes:
+      - ./frigate-detect/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    ports:
+      - "127.0.0.1:${DEV_MQTT_PORT:-1883}:1883"
+
+  frigate:
+    container_name: frigate-dev
+    image: ghcr.io/blakeblackshear/frigate:0.18.2
+    restart: unless-stopped
+    stop_grace_period: 30s
+    shm_size: "128mb"
+    volumes:
+      - ./demo/frigate:/config # config.yml + database (gitignored)
+    tmpfs:
+      - /tmp/cache:size=100000000
+    ports:
+      - "127.0.0.1:${DEV_FRIGATE_PORT:-5000}:5000" # Frigate UI/API (unauthenticated: localhost only)
+    depends_on:
+      - mqtt
+      - go2rtc
+
+  patient-watch:
+    container_name: patient-watch-dev
+    build: ./patient-watch
+    restart: unless-stopped
+    environment:
+      CAMERA: cam_03
+      SOURCE: rtsp://go2rtc:8554/cam_03_sub
+      MQTT_HOST: mqtt
+      FRIGATE_API: http://frigate:5000
+      PATIENT_ZONE: patient_area
+      SENSITIVITY: normal
+      FPS: "10"
+    depends_on:
+      - mqtt
+      - go2rtc
+
+  # Prototype: recognises faces on every camera against a local face library.
+  # Unknown faces get an id (face_0001, ...) after a few clear views; name
+  # them later with manage.py (see face-watch/manage.py). The library is
+  # biometric data: it stays in runtime/faces-dev (gitignored), and unnamed ids not seen
+  # for RETAIN_DAYS are deleted.
+  face-watch:
+    container_name: face-watch-dev
+    build: ./face-watch
+    restart: unless-stopped
+    user: "${UID:-1000}:${GID:-1000}" # owns the face library folder on the host
+    environment:
+      CAMERAS: ${DEV_FACE_CAMERAS:-cam_03} # the demo clip only provides cam_03
+      SOURCE: rtsp://go2rtc:8554/{camera}_sub
+      MQTT_HOST: mqtt
+      FACE_FPS: "3" # per camera
+      RETAIN_DAYS: "30"
+    volumes:
+      - ./runtime/faces-dev:/data
+    depends_on:
+      - mqtt
+      - go2rtc

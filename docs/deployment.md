@@ -5,11 +5,34 @@
 Use Node 22.22 or newer in the Node 22 line (the app uses built-in SQLite).
 
 ```sh
+demo/make-demo-video.sh ~/patient-watch-recordings/rec1   # once, see below
 docker compose -f docker-compose.dev.yml up -d
 cd frontend
 npm ci
 npm run dev
 ```
+
+The dev stack needs no real camera and no edge server. It runs go2rtc, MQTT,
+Frigate (CPU detector, no recording) and patient-watch, all on localhost and
+on the same ports as production, so the app needs no settings. By default
+go2rtc loops a recorded clip as `cam_03` / `cam_03_sub`
+(`go2rtc/go2rtc.demo.yaml`), so the live grid, Frigate person boxes and the
+patient-watch captions all run on known footage. To use the real cameras
+instead, from a laptop on the camera network with credentials in `.env`:
+`GO2RTC_CONFIG=go2rtc.yaml docker compose -f docker-compose.dev.yml up -d`.
+
+The demo clip is built from a patient-watch recording (`record.py`; frames
+plus model output) by `demo/make-demo-video.sh`. It shows real people, so
+`demo/media/` is gitignored; copy the recording folder between machines
+(`~/patient-watch-recordings/` on the edge box). The same recording scores
+detection quality: see `patient-watch/evaluate.py`.
+
+On the edge box itself the live stack already holds those ports. The comments
+at the top of `docker-compose.dev.yml` show how to shift the dev ports, and run
+the dev app with `PORT=3100 NEXT_DIST_DIR=.next-dev APP_DATA_DIR=data-dev` so
+it doesn't overwrite the live app's build or share its database. The dev stack
+has its own Compose project name (`adu-dev`), so it never replaces the live
+detection containers.
 
 Open http://localhost:3000/setup on the Mac running the app and create the owner
 account. Setup is allowed only from loopback with a local Host and Origin and
@@ -48,8 +71,8 @@ contents are never formatted by these scripts.
    /etc/fstab. Use ext4 for a Linux-only recording drive. Confirm with findmnt
    that it is a dedicated filesystem, separate from /. Do not use a folder or
    bind mount backed by the OS disk.
-2. On the mounted HDD, create /mnt/surveillance/manual. Create runtime/app in
-   the repository. Give these two directories UID/GID 1000 ownership for the
+2. On the mounted HDD, create /mnt/surveillance/manual. Create runtime/app and
+   runtime/faces in the repository. Give these directories UID/GID 1000 ownership for the
    unprivileged app container. Check the Dockerfile's node UID if customizing
    the base image. Keep app data on the SSD and video on the HDD.
 3. Fill the root .env with CAM_USER, CAM_PASSWORD and every installed
@@ -116,3 +139,41 @@ camera disconnects, playback on phone/desktop, viewer restrictions, remote
 viewing on cellular, disk health and UPS runtime. Ubuntu deployment, Frigate
 recording and tailnet configuration cannot be validated on the development
 Mac without access to that hardware and its recording disk.
+
+## Face recognition (prototype)
+
+`face-watch` (in the production, detection-only and dev Compose stacks) finds faces on
+every camera's sub stream (OpenCV YuNet), turns each into an embedding (SFace)
+and labels it in the live view with a name, an id such as `face_0003`, or
+"Face" while it is not yet identified. An unknown person gets a new id only
+after a few clear, consistent views, so a glimpse creates nothing. Faces must
+be roughly 32 px wide or more in the 640x360 sub stream, which in practice
+means within a few metres of the camera.
+
+The app's **Faces** tab shows the library: every id with its photos, when and
+where it was last seen, and possible duplicates (ids whose photos look like the
+same person). Administrators can name ids, merge duplicates or mark them as
+different people, remove single wrong photos, and delete one, several or all
+faces; viewers can only browse. The app reads the library from
+`runtime/faces/` (override with `FACES_DIR`, e.g. `runtime/faces-dev` for the
+dev stack). The same changes are available on the command line, and the
+service picks them up within 2 seconds:
+
+```sh
+docker exec face-watch python manage.py list
+docker exec face-watch python manage.py sheet          # runtime/faces/sheet.jpg: faces per id
+docker exec face-watch python manage.py name face_0003 "Alice"
+docker exec face-watch python manage.py merge face_0007 face_0003   # same person
+docker exec face-watch python manage.py forget face_0007
+```
+
+To enrol someone ahead of time, put clear photos in `runtime/faces/known/<Name>/`.
+`face-watch/evaluate.py VIDEO` replays footage through the same rules and
+reports how many identities it creates (one person should give one id).
+
+The library in `runtime/faces/` is biometric data about everyone the cameras
+see, including visitors and passers-by. It never leaves this machine, it is
+gitignored, and unnamed ids not seen for `RETAIN_DAYS` (30) are deleted
+automatically. Check the consent and notice rules that apply where it is used
+(for example BIPA in Illinois, GDPR in the EU, and healthcare-facility
+policies) before using it beyond a household prototype.
