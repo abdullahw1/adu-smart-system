@@ -10,7 +10,7 @@ RUN mkdir /models \
  && curl -fsSL -o /models/gesture_recognizer.task https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/latest/gesture_recognizer.task \
  && curl -fsSL -o /models/efficientdet_lite2.tflite https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite2/float32/latest/efficientdet_lite2.tflite
 WORKDIR /app
-COPY logic.py watch.py test_logic.py /app/
+COPY logic.py watch.py record.py replay.py evaluate.py test_logic.py /app/
 RUN python -m unittest -q test_logic
 ENV MPLCONFIGDIR=/tmp/matplotlib
 USER nobody

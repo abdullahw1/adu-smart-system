@@ -4,6 +4,7 @@
 #   make up STACK=detect        detection-only stack on the edge box (live today)
 #   make up STACK=prod          production stack (via systemd, after the HDD check)
 #   make build | down | clean   same STACK choice
+#   make ps                     containers of every stack (or only STACK=... if given)
 #   make up SERVICES="face-watch"   only some services
 #
 # STACK=dev also honours the port overrides in docker-compose.dev.yml
@@ -36,7 +37,12 @@ DEMO_CLIP := demo/media/cam_03.mp4
 RECORDING ?= $(HOME)/patient-watch-recordings/rec1
 
 .DEFAULT_GOAL := help
-.PHONY: help build up down clean demo-clip
+.PHONY: help build up down clean ps demo-clip
+
+# `make ps` covers every stack unless STACK is given on the command line or in
+# the environment.
+ALL_FILES := docker-compose.yml docker-compose.detect.yml docker-compose.dev.yml docker-compose.remote-mac.yml
+PS_FILES := $(if $(filter command line environment,$(origin STACK)),$(FILE),$(ALL_FILES))
 
 help: ## Show the targets
 	@echo "Usage: make <target> [STACK=dev|detect|prod] [SERVICES=\"...\"]   (now: STACK=$(STACK) -> $(FILE))"
@@ -68,6 +74,9 @@ ifeq ($(STACK),prod)
 	-sudo systemctl stop adu.service
 endif
 	$(DC) down $(ORPHANS) --rmi local --volumes
+
+ps: ## Show this orchestration's containers, running or stopped (all stacks, or STACK=... only)
+	@COMPOSE="$(COMPOSE)" sh deploy/compose-ps.sh $(PS_FILES)
 
 # The dev stack's demo camera. Built once from a patient-watch recording
 # (see demo/make-demo-video.sh); RECORDING=... picks another one.

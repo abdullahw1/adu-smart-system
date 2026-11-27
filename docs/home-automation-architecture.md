@@ -40,10 +40,13 @@ The README goals still apply, extended to every device type:
 
 ## Current architecture
 
-### Development setup on the Ubuntu desktop (running today)
+### Edge server today (before the HDD)
 
-Two systemd **user** services run the live view on the development desktop.
-Both bind to localhost only.
+The edge server (Intel N95, Ubuntu) runs go2rtc and the app as systemd
+**user** services, and the detection stack (`docker-compose.detect.yml`) in
+Docker. Everything binds to localhost; browsers reach only the app, over
+Tailscale Serve HTTPS. There is no 24/7 recording until the HDD is installed;
+manual clips go to `frontend/data/recordings`.
 
 ```mermaid
 flowchart LR
@@ -51,24 +54,38 @@ flowchart LR
         C1["5x Anpviz IPC-D3243W-S<br/>RTSP/ONVIF, H.265 main + sub"]
     end
 
-    subgraph HOST["Ubuntu desktop (user systemd services)"]
-        G["adu-go2rtc.service<br/>go2rtc<br/>127.0.0.1:1984 API<br/>:8554 RTSP / :8555 WebRTC"]
-        A["adu-app.service<br/>Node server.mjs + Next.js<br/>127.0.0.1:3000"]
-        DB[("SQLite<br/>node:sqlite<br/>users, sessions, prefs")]
-        REC[("frontend/data/recordings<br/>manual MP4 clips")]
-        ENV[".env<br/>camera credentials"]
+    subgraph HOST["Edge server"]
+        G["adu-go2rtc (user service)<br/>127.0.0.1:1984 API<br/>:8554 RTSP"]
+        A["adu-app (user service)<br/>Node server.mjs + Next.js<br/>127.0.0.1:3000"]
+        subgraph DET["docker-compose.detect.yml"]
+            F["Frigate 0.18 detection<br/>OpenVINO on iGPU, no recording<br/>127.0.0.1:5000"]
+            MQ["Mosquitto<br/>127.0.0.1:1883"]
+            PW["patient-watch<br/>cam_03, MediaPipe + EfficientDet"]
+            FW["face-watch<br/>all cameras, YuNet + SFace"]
+        end
+        DB[("SQLite<br/>users, sessions, prefs")]
+        LIB[("runtime/faces<br/>face library")]
+        REC[("frontend/data/recordings<br/>manual clips + captions")]
     end
 
     C1 -- "RTSP pull" --> G
-    ENV -.-> G
+    C1 -- "RTSP sub-streams" --> F
+    G -- "sub-streams" --> PW
+    G -- "sub-streams" --> FW
+    F -- "frigate/events" --> MQ
+    PW -- "adu/watch/cam_03" --> MQ
+    FW -- "adu/faces/#" --> MQ
+    FW --- LIB
+    MQ -- "captions" --> A
     G -- "WebSocket/MSE relay<br/>(allow-listed streams)" --> A
     A --- DB
+    A --- LIB
     A -- "ffmpeg record" --> REC
     A -- "ONVIF settings" --> C1
-    A --> BROWSER["Browser on this machine"]
+    A --> TS["Tailscale Serve HTTPS"] --> BROWSER["Family browsers"]
 ```
 
-### Production stack (v1, per docker-compose.yml)
+### Production stack (per docker-compose.yml)
 
 `deploy/adu.service` checks the surveillance HDD mount before starting Compose,
 so containers never write recordings to the OS disk. Remote access uses
@@ -78,16 +95,26 @@ Tailscale Serve in front of the app (see [deployment.md](deployment.md)).
 flowchart LR
     CAMS["5x PoE cameras<br/>VLAN 20, no internet"] -- RTSP --> F
 
-    subgraph EDGE["Edge server (N100) - Docker Compose"]
+    subgraph EDGE["Edge server (N100/N95) - Docker Compose"]
         F["Frigate 0.18<br/>+ bundled go2rtc<br/>127.0.0.1:5000 / :1984 / :8554"]
         APP["ADU app container<br/>Node + Next.js<br/>127.0.0.1:3000"]
+        MQ["Mosquitto<br/>127.0.0.1:1883"]
+        PW["patient-watch"]
+        FW["face-watch"]
         HC["adu-health.timer<br/>health-check.py"]
     end
 
     HDD[("/mnt/surveillance<br/>4TB HDD")]
+    LIB[("runtime/faces<br/>NVMe")]
     F -- "24/7 recording" --> HDD
     APP -- "manual clips" --> HDD
-    F -- "API, streams, events" --> APP
+    F -- "API, streams" --> APP
+    F -- "sub-streams" --> PW
+    F -- "sub-streams" --> FW
+    PW --> MQ
+    FW --> MQ
+    FW --- LIB
+    MQ -- "captions" --> APP
     HC -.->|checks| F
     HC -.->|checks| APP
 
@@ -96,13 +123,25 @@ flowchart LR
     APP --> LAN["Local browser"]
 ```
 
-**What exists:** live grid, full-res expand, manual recording, ONVIF camera
-settings, Frigate timeline/downloads, owner/viewer accounts, same-origin and
-rate-limit protections, health checks.
+**What exists:**
 
-**What is missing for home automation:** no device integration beyond cameras,
-no message bus (the README mentions Mosquitto but it is not in Compose yet), no
-general alert pipeline or push notifications, no TV layout, no device pairing.
+- Live grid with a full-resolution expanded view.
+- Manual recording, with captions saved alongside each clip.
+- ONVIF camera settings.
+- Frigate timeline and downloads (production).
+- Owner, admin and viewer accounts, with same-origin and rate-limit protections.
+- Health checks.
+- An MQTT bus carrying three caption feeds: Frigate objects, the patient monitor
+  on camera 03 (gestures, leaving the zone) and face recognition on every
+  camera. Faces are managed in the Faces tab.
+
+**What is missing for home automation:**
+
+- No device integration beyond cameras.
+- No general alert pipeline or push notifications. Patient-monitor alerts are
+  captions only today; the alerting design below is where they would become
+  notifications.
+- No TV layout and no device pairing.
 
 ## Key decision: integration hub, not custom drivers
 
@@ -317,7 +356,7 @@ for discovery and control. No VLAN 30 → VLAN 10 traffic is allowed.
 
 Keep the existing Node server (`frontend/server.mjs`) and SQLite. It already
 has auth, a WebSocket relay and the camera integration, and a single home does
-not need Postgres. This supersedes the FastAPI + PostgreSQL line in the README
+not need Postgres. This supersedes the earlier FastAPI + PostgreSQL backend plan
 for v2/v3. Revisit only for a multi-site product.
 
 New server modules under `frontend/server/`:
@@ -486,6 +525,7 @@ one remote path to secure.
 - **Sensitive controls** (unlock, garage, alarm disarm, water valve): step-up re-authentication if the session is older than 5 minutes, a confirmation dialog, and an audit log entry.
 - The Home Assistant token, MQTT credentials and camera credentials stay server-side in `.env`. Home Assistant, Mosquitto (except TLS 8883 for VLAN 30) and Frigate bind to localhost.
 - Existing protections stay: same-origin checks, login rate limiting, local-only owner setup.
+- Face recognition data (the face library in `runtime/faces/`) is biometric personal data: it stays on the server, is never committed or synced off-site by default, unnamed identities expire after 30 days, and only administrators can name, merge or delete faces. Any off-site backup must treat it as sensitive.
 - Add passkeys (WebAuthn), since family members on phones tend to reuse weak passwords.
 - No port forwarding, and no Tailscale Funnel (unchanged rule).
 
@@ -548,13 +588,22 @@ unmodified, separate processes.
 | Docker Engine / Compose | Containers | Apache-2.0 | Yes | https://github.com/moby/moby, https://github.com/docker/compose |
 | Tailscale client | Remote access tunnel | BSD-3-Clause (client); coordination service is proprietary SaaS | Client yes | https://github.com/tailscale/tailscale |
 | chrony | NTP for cameras | GPL-2.0 | Yes | https://chrony-project.org (https://gitlab.com/chrony/chrony) |
+| Mosquitto | MQTT broker | EPL-2.0 / EDL-1.0 | Yes | https://github.com/eclipse-mosquitto/mosquitto |
+| OpenVINO | Object detection on the iGPU (inside Frigate) | Apache-2.0 | Yes | https://github.com/openvinotoolkit/openvino |
+| MQTT.js (`mqtt`) | App's MQTT client | MIT | Yes | https://github.com/mqttjs/MQTT.js |
+| MediaPipe (Pose Landmarker, Gesture Recognizer, Object Detector) | Patient monitor: body, hands, person confirmation | Apache-2.0 (library and the published models) | Yes | https://github.com/google-ai-edge/mediapipe |
+| EfficientDet-Lite2 (MediaPipe model) | Person detector that confirms pose bodies | Apache-2.0 | Yes | https://ai.google.dev/edge/mediapipe/solutions/vision/object_detector |
+| OpenCV (`opencv-python-headless`) | Video decode, face detection and recognition runtime | Apache-2.0 | Yes | https://github.com/opencv/opencv |
+| YuNet (OpenCV Zoo) | Face detector | MIT | Yes | https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet |
+| SFace (OpenCV Zoo) | Face embeddings for recognition | Apache-2.0 | Yes | https://github.com/opencv/opencv_zoo/tree/main/models/face_recognition_sface |
+| NumPy | Embedding math | BSD-3-Clause | Yes | https://github.com/numpy/numpy |
+| Eclipse Paho MQTT (Python) | MQTT client for patient-watch and face-watch | EPL-2.0 / EDL-1.0 | Yes | https://github.com/eclipse/paho.mqtt.python |
 
 ### Proposed additions
 
 | Component | Role | License | Open source | Source |
 |---|---|---|---|---|
 | Home Assistant Core | Integration hub, automations, history | Apache-2.0 | Yes | https://github.com/home-assistant/core |
-| Mosquitto | MQTT broker | EPL-2.0 / EDL-1.0 | Yes | https://github.com/eclipse-mosquitto/mosquitto |
 | Zigbee2MQTT | Zigbee ↔ MQTT bridge | GPL-3.0 (separate process) | Yes | https://github.com/Koenkk/zigbee2mqtt |
 | ESPHome | Firmware for DIY sensors (air quality) | MIT (C++ runtime) / GPL-3.0 (Python tooling) | Yes | https://github.com/esphome/esphome |
 | Z-Wave JS UI | Z-Wave controller (if Z-Wave locks) | MIT | Yes | https://github.com/zwave-js/zwave-js-ui |
@@ -571,7 +620,6 @@ unmodified, separate processes.
 | smartmontools | Disk health | GPL-2.0 | Yes | https://github.com/smartmontools/smartmontools |
 | Network UPS Tools (NUT) | UPS monitoring / clean shutdown | GPL-2.0+ | Yes | https://github.com/networkupstools/nut |
 | restic | Encrypted off-site backup | BSD-2-Clause | Yes | https://github.com/restic/restic |
-| OpenVINO | Object detection acceleration (v3) | Apache-2.0 | Yes | https://github.com/openvinotoolkit/openvino |
 | Chromium | TV kiosk browser | BSD-3-Clause | Yes | https://chromium.googlesource.com/chromium/src |
 | libcec (`cec-client`) | HDMI-CEC TV wake/input switch | GPL-2.0 | Yes | https://github.com/Pulse-Eight/libcec |
 | Raspberry Pi OS | TV kiosk OS | Mixed open source + proprietary firmware | Mostly | https://www.raspberrypi.com/software/ |

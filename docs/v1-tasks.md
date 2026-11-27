@@ -3,7 +3,9 @@
 **Target:** Sunday, September 27, 2026
 **Start:** Thursday, September 24, 2026 (3 days)
 
-Scope is exactly the v1 row of the [Phases table](../README.md#phases): 5 cameras recording 24/7, VLANs enforced, Frigate operational, remote viewing via Tailscale tunnel, UPS installed, health alerts configured. No AI (v3). No homeowner app (v2).
+Scope is exactly the v1 row of the [Phases table](../README.md#phases): 5 cameras recording 24/7, VLANs enforced, Frigate operational, remote viewing via Tailscale tunnel, UPS installed, health alerts configured.
+
+> **Update (Nov 2026):** since this plan was written, the homeowner app (v2) and the first detection features (live captions, patient monitor, face recognition) were built and run on the edge server ahead of the HDD. See the [README status](../README.md#status). For the install itself, follow [deployment.md](deployment.md#ubuntu-production); the commands below were updated to match.
 
 ## Risk flag
 
@@ -43,11 +45,10 @@ Pulled directly from the README's v1 description and Requirements section:
 - [ ] Smoke test: VLAN 10 device reaches internet + edge server; VLAN 20 device (test laptop on a camera port) reaches nothing but the edge server's RTSP/ONVIF ports
 
 ### Sat Sept 26 — Stack up, cameras live
-- [ ] Copy `docs/frigate-config.example.yml` → `frigate/config.yml`, fill in real RTSP/ONVIF credentials for all 5 cameras (gitignored — never commit)
-- [ ] Create `mosquitto/config/mosquitto.conf` and `caddy/Caddyfile` (referenced by `docker-compose.yml`, not yet in the repo)
+- [ ] Fill the root `.env` with camera credentials and hosts, then `python3 deploy/generate-frigate.py` to write `frigate/config.yml` for all 5 cameras (gitignored — never commit)
 - [ ] Mount the 4TB HDD to `/mnt/surveillance`, confirm it's separate from the OS drive
-- [ ] `docker compose up -d`
-- [ ] Confirm all 5 cameras connected in Frigate, recording main stream, detecting on sub-stream
+- [ ] Stop the interim edge-box services (`make down STACK=detect`, `systemctl --user disable --now adu-app adu-go2rtc`), then `make build STACK=prod`, install `deploy/adu.service` and `make up STACK=prod`
+- [ ] Confirm all 5 cameras connected in Frigate and recording the main stream (`make ps STACK=prod` shows every service)
 - [ ] Confirm live view for all 5
 - [ ] Set 14-day retention, confirm actual disk usage tracks the ~16-day budget
 - [ ] Configure chrony for the camera VLAN
@@ -62,17 +63,16 @@ Pulled directly from the README's v1 description and Requirements section:
 - [ ] **Acceptance 1:** pull the WAN cable → recording and local playback keep working
 - [ ] **Acceptance 2:** pull the UPS plug → system stays up, alert fires
 - [ ] **Acceptance 3:** unplug one camera → offline alert fires within 60s
-- [ ] **Acceptance 4:** from outside the LAN, Tailscale reaches the Frigate UI; camera ports are unreachable
+- [ ] **Acceptance 4:** from outside the LAN, Tailscale reaches the app (not Frigate's UI); camera ports are unreachable
 - [ ] Walk `firewall-matrix.md` row by row, confirm every rule holds
 - [ ] Update README v1 status to Done, note actual retention achieved
-- [ ] Commit `mosquitto/config`, `caddy/Caddyfile` (sanitized, no secrets) to the repo
 - [ ] Push to `main`
 
 ## Explicitly out of scope for Sunday
 
 Belongs to v2 or v3 — do not let these creep in:
-- FastAPI backend / Next.js frontend (v2)
-- Object detection / OpenVINO (v3)
+- Changes to the homeowner app (v2; already built, Node + Next.js)
+- New detection or recognition work (v3; live captions, patient monitor and face recognition already run as prototypes)
 - Sensor integrations — smoke/CO/gas/flood/door/stove (v3)
 - Off-site backup (v3)
 - Installer image (v3)
